@@ -46,7 +46,7 @@ pnpm lint
 - **Chat Messages**: Support for user, AI, status, and table message types
 
 ### AI Tools Integration
-- **Spreadsheet Tools**: `api/_lib/tools/spreadsheet-tools.ts` - Cell manipulation, formula application
+- **Spreadsheet Tools**: `api/_lib/tools.ts` - Cell manipulation, formula application, row/column operations
 - **Agent System**: `api/_lib/agent.ts` - Tool execution handler
 
 ## Technical Stack

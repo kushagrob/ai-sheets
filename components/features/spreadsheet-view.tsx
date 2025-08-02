@@ -10,7 +10,7 @@ import { useWorkbook } from "@/hooks/use-workbook"
 import { useUIStore } from "@/state/ui-store"
 
 export function SpreadsheetView() {
-  const { workbook, activeSheet, setActiveSheet, updateCell, undo, redo, canUndo, canRedo } = useWorkbook()
+  const { workbook, activeSheet, setActiveSheet, updateCell, createSheet, deleteSheet, renameSheet, resetWorkbook, undo, redo, canUndo, canRedo } = useWorkbook()
   const { isChatPanelOpen, toggleChatPanel, chatPanelWidth, setChatPanelWidth } = useUIStore()
   const [selectedCell, setSelectedCell] = useState({ row: 0, col: 0 })
   const gridScrollRef = useRef<HTMLDivElement>(null)
@@ -47,7 +47,10 @@ export function SpreadsheetView() {
               <span>📁</span>
               <span>Open Xlsx File</span>
             </button>
-            <button className="flex items-center space-x-2 px-3 py-1 border rounded text-sm">
+            <button 
+              onClick={resetWorkbook}
+              className="flex items-center space-x-2 px-3 py-1 border rounded text-sm hover:bg-gray-50"
+            >
               <span>📄</span>
               <span>New File</span>
             </button>
@@ -99,7 +102,14 @@ export function SpreadsheetView() {
               onRedo={redo}
               scrollRef={gridScrollRef}
             />
-            <SheetTabs sheets={workbook.sheets} activeSheetId={activeSheet.id} onSheetSelect={setActiveSheet} />
+            <SheetTabs 
+              sheets={workbook.sheets} 
+              activeSheetId={activeSheet.id} 
+              onSheetSelect={setActiveSheet}
+              onCreateSheet={createSheet}
+              onDeleteSheet={deleteSheet}
+              onRenameSheet={renameSheet}
+            />
           </div>
         </div>
       </div>

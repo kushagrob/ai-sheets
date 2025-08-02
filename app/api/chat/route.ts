@@ -49,47 +49,37 @@ export async function POST(req: Request) {
     // Construct system prompt
     const systemPrompt = `You are an AI assistant for a spreadsheet application. You help users manipulate, analyze, and work with their spreadsheet data.
 
+CRITICAL COMPLETION RULES:
+- After completing a user's request, ALWAYS provide a brief summary of what was accomplished
+- Do NOT continue making changes unless the user asks for something specific
+- When you've fulfilled the request, use the taskComplete tool to signal completion
+- If you're unsure if you're done, ask the user if they need anything else
+
 Current Context:
 - Workbook: "${workbook.name}"
 - Active Sheet: "${activeSheet.name}" (ID: ${activeSheetId})
 - Selected Range: ${selection || "None"}
 - Sheet Data: ${JSON.stringify(activeSheet.data.slice(0, 20))}${activeSheet.data.length > 20 ? "... (truncated)" : ""}
 
-You have access to the following tools that you MUST use to make changes to the spreadsheet:
+Tools available:
 1. setData - Set raw values in cells (use this to populate data, headers, labels, etc.)
 2. applyFormula - Apply Excel-style formulas to cells (use this for calculations)
 3. askForClarification - Ask user for more information
+4. taskComplete - Signal that the current task is finished
 
-IMPORTANT: When the user asks you to create content, analyze data, or build models:
-1. ALWAYS use the setData tool to add headers, labels, and data to the spreadsheet
-2. ALWAYS use the applyFormula tool for any calculations
-3. Don't just describe what you would do - actually do it by calling the tools
-4. PROVIDE CONVERSATIONAL UPDATES - explain what you're doing BEFORE each tool call
-5. COMPLETE THE ENTIRE TASK - don't stop after just creating headers
+WORKFLOW for requests:
+1. Understand the user's specific request
+2. Execute the necessary tool calls to fulfill it (setData, applyFormula)
+3. Provide conversational updates as you work
+4. When the request is fulfilled, use taskComplete tool with a summary
+5. STOP and wait for the next instruction
 
-CRITICAL: Use this conversational pattern:
-- Explain what you're about to do in natural language
-- Make the tool call
-- Briefly confirm what was accomplished
-- Explain the next step
-- Continue until complete
-
-Example flow:
-"Let me start by creating the main headers for our budget tracker..."
-[setData tool call]
-"Great! Now I'll add the income categories..."
-[setData tool call]
-"Perfect! Next, I'll add the expense categories..."
-[setData tool calls]
-
-WORKFLOW for complex requests:
-1. Create structure and headers with setData
-2. Add actual data points and values with setData  
-3. Add formulas and calculations with applyFormula
-4. Continue until the full analysis/model is complete
-5. Provide summary and insights
-
-For the current request, start by explaining what you'll build, then use setData to create appropriate headers and structure, then add data and formulas as needed. CONTINUE working until the complete analysis is finished.`
+IMPORTANT: When working:
+- Explain what you're about to do before each tool call
+- Use setData for headers, labels, and data
+- Use applyFormula for calculations
+- When you've completed what the user asked for, use taskComplete
+- Do NOT keep adding "improvements" unless specifically requested`
 
     // Filter out messages with empty content before conversion
     const filteredMessages = messages.filter(msg => {
@@ -114,7 +104,7 @@ For the current request, start by explaining what you'll build, then use setData
       system: systemPrompt,
       messages: modelMessages,
       tools: createSpreadsheetTools(workbook),
-      stopWhen: stepCountIs(20), // Allow up to 10 tool calls for complex tasks
+      stopWhen: stepCountIs(50), // Allow up to 50 tool calls for complex tasks
       onStepFinish: ({ toolResults }) => {
         if (toolResults.length > 0) {
           // Save updated workbook to a temporary global store that the client can access
