@@ -28,8 +28,14 @@ export function FormulaBar({ selectedCell, activeSheet, onCellUpdate }: FormulaB
   const cellAddress = `${getColumnLetter(selectedCell.col)}${selectedCell.row + 1}`
 
   useEffect(() => {
-    const cellValue = activeSheet.data[selectedCell.row]?.[selectedCell.col] || ""
-    setFormulaValue(String(cellValue))
+    const cell = activeSheet.data[selectedCell.row]?.[selectedCell.col]
+    
+    // Show formula if it exists, otherwise show the value
+    if (cell?.formula) {
+      setFormulaValue(cell.formula)
+    } else {
+      setFormulaValue(cell?.value ? String(cell.value) : "")
+    }
   }, [selectedCell, activeSheet])
 
   const handleFormulaSubmit = (e: React.KeyboardEvent) => {
@@ -45,8 +51,10 @@ export function FormulaBar({ selectedCell, activeSheet, onCellUpdate }: FormulaB
 
   const handleFormulaBlur = () => {
     // Update cell when formula bar loses focus
-    const currentValue = activeSheet.data[selectedCell.row]?.[selectedCell.col] || ""
-    if (formulaValue !== String(currentValue)) {
+    const cell = activeSheet.data[selectedCell.row]?.[selectedCell.col]
+    const currentDisplayValue = cell?.formula || (cell?.value ? String(cell.value) : "")
+    
+    if (formulaValue !== currentDisplayValue) {
       onCellUpdate(activeSheet.id, selectedCell.row, selectedCell.col, formulaValue)
     }
   }

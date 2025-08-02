@@ -1,7 +1,12 @@
+export interface Cell {
+  value: string | number | null
+  formula?: string
+}
+
 export interface Sheet {
   id: string
   name: string
-  data: (string | number)[][]
+  data: Cell[][]
 }
 
 export interface Workbook {

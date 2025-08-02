@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { X, Send, Paperclip, GripVertical } from "lucide-react"
+import { X, Send, Paperclip, GripVertical, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useUIStore } from "@/state/ui-store"
@@ -17,7 +17,7 @@ interface AIChatPanelProps {
 
 export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }: AIChatPanelProps) {
   const { toggleChatPanel } = useUIStore()
-  const { messages, sendMessage, isLoading } = useChatMessages(workbookId, activeSheetId)
+  const { messages, sendMessage, newChat, isLoading } = useChatMessages(workbookId, activeSheetId)
   const [inputValue, setInputValue] = useState("")
   const [isResizing, setIsResizing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -33,8 +33,11 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
 
   const handleSendMessage = async () => {
     if (inputValue.trim() && !isLoading) {
+      console.log('Sending message:', inputValue.trim())
       await sendMessage(inputValue.trim())
       setInputValue("")
+    } else {
+      console.log('Cannot send message:', { inputValue: inputValue.trim(), isLoading })
     }
   }
 
@@ -42,6 +45,12 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSendMessage()
+    }
+  }
+
+  const handleSuggestionClick = async (suggestion: string) => {
+    if (!isLoading) {
+      await sendMessage(suggestion)
     }
   }
 
@@ -73,7 +82,7 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
   }
 
   return (
-    <>
+    <div className="flex flex-shrink-0" style={{ width }}>
       {/* Resize Handle */}
       <div
         ref={resizeRef}
@@ -95,9 +104,20 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
             <h3 className="font-medium">AI Assistant</h3>
             <p className="text-sm text-gray-500">Ask Shortcut to do your work for you</p>
           </div>
-          <Button variant="ghost" size="sm" onClick={toggleChatPanel}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center space-x-2">
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={newChat}
+              disabled={isLoading}
+              title="New Chat"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={toggleChatPanel}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {/* Tip Section */}
@@ -114,40 +134,52 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
             <div className="space-y-3">
               <h4 className="font-medium text-gray-700">Try these suggestions</h4>
               <div className="space-y-2">
-                <button className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm">
+                <button 
+                  className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm"
+                  onClick={() => handleSuggestionClick("Determine returns on buying a 3-bed vs renting in NYC in 2025")}
+                  disabled={isLoading}
+                >
                   Determine returns on buying a 3-bed vs renting in NYC in 2025
                 </button>
-                <button className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm">
+                <button 
+                  className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm"
+                  onClick={() => handleSuggestionClick("Create a personal budget tracker with spending insights")}
+                  disabled={isLoading}
+                >
                   Create a personal budget tracker with spending insights
                 </button>
-                <button className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm">
+                <button 
+                  className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm"
+                  onClick={() => handleSuggestionClick("Build me a three statement model for Tesla")}
+                  disabled={isLoading}
+                >
                   Build me a three statement model for Tesla
                 </button>
               </div>
             </div>
           )}
 
-          {messages.map((message, index) => (
-            <div key={index} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[80%] p-3 rounded-lg ${
-                  message.type === "user"
-                    ? "bg-blue-600 text-white"
-                    : message.type === "status"
-                      ? "bg-yellow-50 text-yellow-800 border border-yellow-200"
+          {messages.map((message, index) => {
+            // Extract text from UIMessage parts
+            const messageText = message.parts
+              ?.filter(part => part.type === 'text')
+              ?.map(part => 'text' in part ? part.text : '')
+              ?.join('') || ''
+            
+            return (
+              <div key={message.id || index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[80%] p-3 rounded-lg ${
+                    message.role === "user"
+                      ? "bg-blue-600 text-white"
                       : "bg-gray-100 text-gray-800"
-                }`}
-              >
-                {message.type === "status" && (
-                  <div className="flex items-center space-x-2">
-                    <div className="animate-spin h-3 w-3 border border-yellow-600 border-t-transparent rounded-full" />
-                    <span className="text-sm">{message.content}</span>
-                  </div>
-                )}
-                {message.type !== "status" && <p className="text-sm whitespace-pre-wrap">{message.content}</p>}
+                  }`}
+                >
+                  <p className="text-sm whitespace-pre-wrap">{messageText}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           <div ref={messagesEndRef} />
         </div>
 
@@ -202,6 +234,6 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
           </div>
         </div>
       </div>
-    </>
+    </div>
   )
 }

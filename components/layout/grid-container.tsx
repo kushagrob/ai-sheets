@@ -10,21 +10,24 @@ interface GridContainerProps {
   onCellUpdate: (sheetId: string, row: number, col: number, value: string) => void
   onUndo: () => boolean
   onRedo: () => boolean
+  scrollRef?: React.RefObject<HTMLDivElement>
 }
 
-export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRedo }: GridContainerProps) {
+export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRedo, scrollRef }: GridContainerProps) {
   const [selectedCell, setSelectedCell] = useState({ row: 0, col: 0 })
+  const [selectedRange, setSelectedRange] = useState<{ startRow: number; startCol: number; endRow: number; endCol: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [editValue, setEditValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Generate column headers (A, B, C, ...)
+  // Generate column headers (A, B, C, ..., Z, AA, AB, ...)
   const getColumnHeader = (index: number): string => {
     let result = ""
     let num = index
     while (num >= 0) {
       result = String.fromCharCode(65 + (num % 26)) + result
       num = Math.floor(num / 26) - 1
+      if (num < 0) break
     }
     return result
   }
@@ -36,14 +39,27 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
     }
 
     setSelectedCell({ row, col })
+    setSelectedRange(null) // Clear range selection when clicking individual cell
     onCellSelect({ row, col })
     setEditingCell(null)
   }
 
+  const isCellInSelection = (row: number, col: number): boolean => {
+    if (selectedRange) {
+      return row >= selectedRange.startRow && 
+             row <= selectedRange.endRow && 
+             col >= selectedRange.startCol && 
+             col <= selectedRange.endCol
+    }
+    return selectedCell.row === row && selectedCell.col === col
+  }
+
   const handleCellDoubleClick = (row: number, col: number) => {
     setEditingCell({ row, col })
-    const cellValue = sheet.data[row]?.[col] || ""
-    setEditValue(String(cellValue))
+    const cell = sheet.data[row]?.[col]
+    // When editing, show the formula if it exists, otherwise show the value
+    const displayValue = cell?.formula || (cell?.value ? String(cell.value) : "")
+    setEditValue(displayValue)
     setSelectedCell({ row, col })
     onCellSelect({ row, col })
   }
@@ -56,6 +72,10 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
     }
   }
 
+  // Ensure we have enough rows and columns
+  const maxRows = Math.max(50, sheet.data.length)
+  const maxCols = 52 // A-Z, AA-AZ (Excel-like)
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     console.log("Key pressed:", e.key, "Ctrl:", e.ctrlKey, "Meta:", e.metaKey)
 
@@ -66,7 +86,13 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
           e.preventDefault()
           e.stopPropagation()
           console.log("Select All triggered - preventing browser default")
-          // TODO: Implement select all functionality
+          // Select all cells in the visible range
+          setSelectedRange({
+            startRow: 0,
+            startCol: 0,
+            endRow: maxRows - 1,
+            endCol: maxCols - 1
+          })
           return
         case "z":
           e.preventDefault()
@@ -110,6 +136,12 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
         setEditValue("")
       }
     } else {
+      // Handle Escape to clear range selection
+      if (e.key === "Escape" && selectedRange) {
+        e.preventDefault()
+        setSelectedRange(null)
+        return
+      }
       // Handle navigation when not editing
       const { row, col } = selectedCell
       let newRow = row
@@ -130,7 +162,7 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
           break
         case "ArrowRight":
           e.preventDefault()
-          newCol = Math.min(25, col + 1) // Max 26 columns (A-Z)
+          newCol = Math.min(51, col + 1) // Max 52 columns
           break
         case "Enter":
           e.preventDefault()
@@ -145,8 +177,18 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
         case "Delete":
         case "Backspace":
           e.preventDefault()
-          // Clear cell content
-          onCellUpdate(sheet.id, row, col, "")
+          // Clear cell content - handle range or single cell
+          if (selectedRange) {
+            // Clear all cells in the selected range
+            for (let r = selectedRange.startRow; r <= selectedRange.endRow; r++) {
+              for (let c = selectedRange.startCol; c <= selectedRange.endCol; c++) {
+                onCellUpdate(sheet.id, r, c, "")
+              }
+            }
+          } else {
+            // Clear single cell
+            onCellUpdate(sheet.id, row, col, "")
+          }
           return
         default:
           // Start editing if user types a character
@@ -180,13 +222,10 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
     }
   }, [])
 
-  // Ensure we have enough rows and columns
-  const maxRows = Math.max(50, sheet.data.length)
-  const maxCols = 26 // A-Z
-
   return (
     <div
-      className="flex-1 overflow-auto bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+      ref={scrollRef}
+      className="flex-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset overflow-auto min-w-0"
       tabIndex={0}
       onKeyDown={handleKeyDown}
       onMouseDown={(e) => {
@@ -196,14 +235,14 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
       style={{ outline: "none" }}
     >
       <div className="relative">
-        <table className="border-collapse">
+        <table className="border-collapse" style={{ minWidth: '5300px' }}>
           <thead>
             <tr>
               <th className="w-12 h-6 bg-gray-100 border border-gray-300 text-xs font-normal sticky top-0 z-10"></th>
               {Array.from({ length: maxCols }, (_, i) => (
                 <th
                   key={i}
-                  className="min-w-[80px] h-6 bg-gray-100 border border-gray-300 text-xs font-normal px-2 sticky top-0 z-10"
+                  className="w-[100px] min-w-[100px] h-6 bg-gray-100 border border-gray-300 text-xs font-normal px-2 sticky top-0 z-10"
                 >
                   {getColumnHeader(i)}
                 </th>
@@ -217,14 +256,16 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
                   {rowIndex + 1}
                 </td>
                 {Array.from({ length: maxCols }, (_, colIndex) => {
-                  const cellValue = sheet.data[rowIndex]?.[colIndex] || ""
-                  const isSelected = selectedCell.row === rowIndex && selectedCell.col === colIndex
+                  const cell = sheet.data[rowIndex]?.[colIndex]
+                  // In the grid, always show the computed value, not the formula
+                  const cellValue = cell?.value || ""
+                  const isSelected = isCellInSelection(rowIndex, colIndex)
                   const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex
 
                   return (
                     <td
                       key={colIndex}
-                      className={`min-w-[80px] h-6 border border-gray-300 px-1 text-xs cursor-cell relative ${
+                      className={`w-[100px] min-w-[100px] h-6 border border-gray-300 px-1 text-xs cursor-cell relative ${
                         isSelected ? "bg-blue-100 border-blue-500 border-2 z-20" : "hover:bg-gray-50"
                       }`}
                       onClick={() => handleCellClick(rowIndex, colIndex)}

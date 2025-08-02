@@ -1,4 +1,4 @@
-import type { Workbook } from "../../types/workbook"
+import type { Workbook } from "../../../types/workbook"
 
 // Helper function to convert Excel-style cell reference to row/col indices
 function cellToIndices(cell: string): { row: number; col: number } {
@@ -58,11 +58,12 @@ function evaluateFormula(formula: string, workbook: Workbook, sheetId: string): 
 
       for (let row = range.startRow; row <= range.endRow; row++) {
         for (let col = range.startCol; col <= range.endCol; col++) {
-          const value = sheet.data[row]?.[col]
-          if (typeof value === "number") {
-            sum += value
-          } else if (typeof value === "string") {
-            const num = Number.parseFloat(value)
+          const cell = sheet.data[row]?.[col]
+          const cellValue = cell?.value
+          if (typeof cellValue === "number") {
+            sum += cellValue
+          } else if (typeof cellValue === "string") {
+            const num = Number.parseFloat(cellValue)
             if (!isNaN(num)) sum += num
           }
         }
@@ -82,15 +83,16 @@ function evaluateFormula(formula: string, workbook: Workbook, sheetId: string): 
   const cellRefs = expr.match(/[A-Z]+\d+/g) || []
   const sheet = workbook.sheets.find((s) => s.id === sheetId)
   if (sheet) {
-    for (const cellRef of cellRefs) {
-      try {
-        const { row, col } = cellToIndices(cellRef)
-        const value = sheet.data[row]?.[col] || 0
-        result = result.replace(cellRef, String(value))
-      } catch (error) {
-        return "#ERROR!"
-      }
+      for (const cellRef of cellRefs) {
+    try {
+      const { row, col } = cellToIndices(cellRef)
+      const cell = sheet.data[row]?.[col]
+      const value = cell?.value || 0
+      result = result.replace(cellRef, String(value))
+    } catch (error) {
+      return "#ERROR!"
     }
+  }
   }
 
   // Evaluate simple arithmetic
@@ -129,7 +131,7 @@ export async function executeSpreadsheetTool(toolName: string, params: any, work
         let dataRowIndex = 0
         for (let row = rangeIndices.startRow; row <= rangeIndices.endRow && dataRowIndex < data.length; row++) {
           while (sheet.data[row].length < maxCol) {
-            sheet.data[row].push("")
+            sheet.data[row].push({ value: null })
           }
 
           let dataColIndex = 0
@@ -138,7 +140,8 @@ export async function executeSpreadsheetTool(toolName: string, params: any, work
             col <= rangeIndices.endCol && dataColIndex < data[dataRowIndex].length;
             col++
           ) {
-            sheet.data[row][col] = data[dataRowIndex][dataColIndex]
+            const cellValue = data[dataRowIndex][dataColIndex]
+            sheet.data[row][col] = { value: cellValue === "" ? null : cellValue }
             dataColIndex++
           }
           dataRowIndex++
@@ -167,12 +170,12 @@ export async function executeSpreadsheetTool(toolName: string, params: any, work
           sheet.data.push([])
         }
         while (sheet.data[row].length <= col) {
-          sheet.data[row].push("")
+          sheet.data[row].push({ value: null })
         }
 
         // Evaluate the formula
         const result = evaluateFormula(formula, workbook, params.sheetId)
-        sheet.data[row][col] = result
+        sheet.data[row][col] = { value: result, formula: formula }
 
         return {
           success: true,

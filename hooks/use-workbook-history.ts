@@ -88,17 +88,6 @@ export function useWorkbookHistory(initialWorkbook: Workbook | null) {
   const canUndo = currentIndex > 0
   const canRedo = currentIndex < history.length - 1
 
-  console.log(
-    "History state - canUndo:",
-    canUndo,
-    "canRedo:",
-    canRedo,
-    "currentIndex:",
-    currentIndex,
-    "historyLength:",
-    history.length,
-  )
-
   return {
     workbook,
     setWorkbook: addToHistory,
