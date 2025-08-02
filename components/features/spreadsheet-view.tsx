@@ -96,6 +96,7 @@ export function SpreadsheetView() {
           <div className="flex flex-col flex-1 min-w-0">
             <GridContainer
               sheet={activeSheet}
+              workbook={workbook}
               onCellSelect={setSelectedCell}
               onCellUpdate={updateCell}
               onUndo={undo}

@@ -1,9 +1,106 @@
+// Smart compression function for sheet data
+function compressSheetData(data: any[][], maxChars: number = 8000): string {
+  if (!data || data.length === 0) return "Sheet is empty"
+  
+  // Find actual data boundaries (ignore empty rows/columns)
+  let maxRow = -1
+  let maxCol = -1
+  const nonEmptyCells: { row: number; col: number; cell: any }[] = []
+  
+  for (let row = 0; row < data.length; row++) {
+    if (!data[row]) continue
+    for (let col = 0; col < data[row].length; col++) {
+      const cell = data[row][col]
+      if (cell && (cell.value !== null && cell.value !== "" && cell.value !== undefined) || cell.formula) {
+        nonEmptyCells.push({ row, col, cell })
+        maxRow = Math.max(maxRow, row)
+        maxCol = Math.max(maxCol, col)
+      }
+    }
+  }
+  
+  if (nonEmptyCells.length === 0) return "Sheet contains no data"
+  
+  // Helper to convert column index to Excel notation (0=A, 1=B, etc.)
+  const getColumnName = (col: number): string => {
+    let result = ""
+    let num = col
+    while (num >= 0) {
+      result = String.fromCharCode(65 + (num % 26)) + result
+      num = Math.floor(num / 26) - 1
+      if (num < 0) break
+    }
+    return result
+  }
+  
+  // Create compact representation
+  let result = `Data range: A1:${getColumnName(maxCol)}${maxRow + 1} (${nonEmptyCells.length} non-empty cells)\n`
+  
+  // Separate values and formulas for better readability
+  const cellsWithValues: string[] = []
+  const cellsWithFormulas: string[] = []
+  
+  for (const { row, col, cell } of nonEmptyCells) {
+    const cellRef = `${getColumnName(col)}${row + 1}`
+    
+    if (cell.formula) {
+      const value = cell.value !== null && cell.value !== undefined ? ` (=${cell.value})` : ""
+      cellsWithFormulas.push(`${cellRef}: ${cell.formula}${value}`)
+    } else {
+      const displayValue = typeof cell.value === 'string' && cell.value.length > 50 
+        ? `"${cell.value.substring(0, 47)}..."` 
+        : JSON.stringify(cell.value)
+      cellsWithValues.push(`${cellRef}: ${displayValue}`)
+    }
+  }
+  
+  // Add values section
+  if (cellsWithValues.length > 0) {
+    result += `\nValues: ${cellsWithValues.join(', ')}`
+  }
+  
+  // Add formulas section (more important, so always include)
+  if (cellsWithFormulas.length > 0) {
+    result += `\nFormulas: ${cellsWithFormulas.join(', ')}`
+  }
+  
+  // Truncate if too long, but preserve formulas
+  if (result.length > maxChars) {
+    if (cellsWithFormulas.length > 0) {
+      // Prioritize formulas - keep all formulas and truncate values
+      const formulaSection = `\nFormulas: ${cellsWithFormulas.join(', ')}`
+      const availableForValues = maxChars - result.split('\nValues:')[0].length - formulaSection.length - 100
+      
+      if (cellsWithValues.length > 0 && availableForValues > 0) {
+        let truncatedValues = ""
+        let charCount = 0
+        for (const value of cellsWithValues) {
+          if (charCount + value.length + 2 > availableForValues) break
+          truncatedValues += (truncatedValues ? ', ' : '') + value
+          charCount += value.length + 2
+        }
+        result = result.split('\nValues:')[0] + `\nValues: ${truncatedValues}...` + formulaSection
+      } else {
+        result = result.split('\nValues:')[0] + formulaSection
+      }
+    } else {
+      // No formulas, just truncate values
+      result = result.substring(0, maxChars - 3) + "..."
+    }
+  }
+  
+  return result
+}
+
 export function createSystemPrompt(workbook: any, activeSheetId: string, selection?: string) {
   const activeSheet = workbook.sheets.find((sheet: any) => sheet.id === activeSheetId)
   const workbookOverview = workbook.sheets.map((sheet: any) => ({
     id: sheet.id,
     name: sheet.name
   }))
+  
+  // Use smart compression for sheet data
+  const compressedSheetData = compressSheetData(activeSheet.data)
 
   return `You are an AI assistant for a spreadsheet application. You help users manipulate, analyze, and work with their spreadsheet data.
 
@@ -13,6 +110,7 @@ WORKBOOK CONTEXT:
 - All Sheets: ${workbookOverview.map((s: any) => `"${s.name}" (${s.id})`).join(', ')}
 - Active Sheet: "${activeSheet.name}" (ID: ${activeSheetId})
 - Selected Range: ${selection || "None"}
+- Current Sheet Data: ${compressedSheetData}
 
 AVAILABLE TOOLS:
 
@@ -39,7 +137,6 @@ ORGANIZATION TOOLS:
 - deleteColumns - Delete columns from the sheet
 
 UTILITY TOOLS:
-- formatRange - Apply formatting (headers, currency, percentages, etc.)
 - askForClarification - Ask the user a clarifying question if the request is ambiguous
 - taskComplete - Signal that the current task is finished
 
@@ -49,9 +146,22 @@ EFFICIENCY GUIDELINES:
 - USE SHEET MANAGEMENT TOOLS to organize data across multiple sheets
 - Batch similar operations together rather than alternating between different tool types
 
+ENHANCED FORMULA ENGINE:
+The spreadsheet now supports 40+ Excel functions including:
+
+STATISTICAL: SUM, AVERAGE, COUNT, COUNTA, MAX, MIN, STDEV, VAR
+LOGICAL: IF, AND, OR, NOT
+LOOKUP: VLOOKUP, HLOOKUP, INDEX, MATCH
+FINANCIAL: NPV, IRR, PMT, PV, FV
+DATE/TIME: TODAY, NOW, DATE, YEAR, MONTH, DAY
+TEXT: CONCATENATE, LEFT, RIGHT, MID, LEN, UPPER, LOWER, TRIM
+CONDITIONAL: SUMIF, COUNTIF, AVERAGEIF
+MATH: ROUND, ROUNDUP, ROUNDDOWN, ABS, SQRT, POWER
+
 CRITICAL: Formula vs Data:
-- Use applyFormula/applyFormulaToRange for ANY expression starting with = (like =SUM(A1:B10), =A1+B1, =C5*D5)
+- Use applyFormula/applyFormulaToRange for ANY expression starting with = (like =IF(A1>100,"High","Low"), =VLOOKUP(B2,D:F,2,FALSE), =NPV(0.1,C1:C5))
 - Use setData/setDataGrid ONLY for static values (like numbers 100, 200 or text "Total")
+- Complex formulas are now fully supported (financial modeling, conditional logic, lookups)
 - This ensures calculated values display correctly instead of showing formula text
 
 PERFORMANCE OPTIMIZATION EXAMPLES:

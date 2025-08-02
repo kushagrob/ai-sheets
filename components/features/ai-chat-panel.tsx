@@ -2,9 +2,10 @@
 
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { X, Send, Paperclip, GripVertical, Plus } from "lucide-react"
+import { X, Send, Paperclip, GripVertical, Plus, Square, RefreshCw, AlertCircle, Wifi, WifiOff, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useUIStore } from "@/state/ui-store"
 import { useChatMessages } from "@/hooks/use-chat-messages"
 
@@ -17,7 +18,18 @@ interface AIChatPanelProps {
 
 export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }: AIChatPanelProps) {
   const { toggleChatPanel } = useUIStore()
-  const { messages, sendMessage, newChat, isLoading } = useChatMessages(workbookId, activeSheetId)
+  const { 
+    messages, 
+    sendMessage, 
+    stopMessage, 
+    newChat, 
+    retryLastMessage,
+    clearError,
+    isLoading, 
+    error,
+    connectionStatus,
+    canRetry
+  } = useChatMessages(workbookId, activeSheetId)
   const [inputValue, setInputValue] = useState("")
   const [isResizing, setIsResizing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -100,8 +112,28 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
       <div className="flex-1 bg-white flex flex-col border-l">
         {/* Chat Header */}
         <div className="flex items-center justify-between p-4 border-b">
-          <div>
-            <h3 className="font-medium">AI Assistant</h3>
+          <div className="flex-1">
+            <div className="flex items-center space-x-2">
+              <h3 className="font-medium">AI Assistant</h3>
+              {/* Connection Status Indicator */}
+              <div className="flex items-center">
+                {connectionStatus === 'connected' && (
+                  <div title="Connected">
+                    <Wifi className="h-3 w-3 text-green-500" />
+                  </div>
+                )}
+                {connectionStatus === 'disconnected' && (
+                  <div title="Disconnected">
+                    <WifiOff className="h-3 w-3 text-yellow-500" />
+                  </div>
+                )}
+                {connectionStatus === 'error' && (
+                  <div title="Connection Error">
+                    <XCircle className="h-3 w-3 text-red-500" />
+                  </div>
+                )}
+              </div>
+            </div>
             <p className="text-sm text-gray-500">Ask Shortcut to do your work for you</p>
           </div>
           <div className="flex items-center space-x-2">
@@ -127,6 +159,40 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
             changes can be reverted.
           </p>
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="p-4 border-b">
+            <Alert variant={error.type === 'workbook' ? 'default' : 'destructive'}>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between">
+                <span>{error.message}</span>
+                <div className="flex items-center space-x-2 ml-4">
+                  {canRetry && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={retryLastMessage}
+                      disabled={isLoading}
+                      className="h-6 text-xs"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Retry
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearError}
+                    className="h-6 text-xs"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -201,7 +267,7 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type your message here..."
+                placeholder={isLoading ? "Generating response..." : "Type your message here..."}
                 className="min-h-[40px] max-h-[120px] resize-none pr-10"
                 disabled={isLoading}
               />
@@ -209,14 +275,26 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
                 <Paperclip className="h-4 w-4" />
               </Button>
             </div>
-            <Button
-              onClick={handleSendMessage}
-              disabled={!inputValue.trim() || isLoading}
-              size="sm"
-              className="bg-green-600 hover:bg-green-700"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
+            {isLoading ? (
+              <Button
+                onClick={stopMessage}
+                size="sm"
+                variant="destructive"
+                className="bg-red-600 hover:bg-red-700"
+                title="Stop generation"
+              >
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                onClick={handleSendMessage}
+                disabled={!inputValue.trim() || connectionStatus === 'error'}
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 disabled:opacity-50"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            )}
           </div>
 
           <div className="flex items-center justify-between mt-2 text-xs text-gray-500">

@@ -1,6 +1,7 @@
 import { streamText, convertToModelMessages, stepCountIs } from "ai"
 import { anthropic } from "@ai-sdk/anthropic"
 import { createSpreadsheetTools } from "../_lib/tools"
+import { createSystemPrompt } from "../_lib/prompt"
 
 export async function POST(req: Request) {
   try {
@@ -11,7 +12,13 @@ export async function POST(req: Request) {
         // Ensure messages is an array
     if (!Array.isArray(messages)) {
       console.error("Messages is not an array:", messages)
-      return new Response("Invalid messages format", { status: 400 })
+      return new Response(
+        JSON.stringify({ error: "Invalid messages format - expected array" }), 
+        { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
     }
 
     // Messages are already in proper UIMessage format from frontend - no conversion needed!
@@ -43,43 +50,17 @@ export async function POST(req: Request) {
     const activeSheet = workbook.sheets.find((sheet: any) => sheet.id === activeSheetId)
     if (!activeSheet) {
       console.error("Active sheet not found:", activeSheetId, "Available sheets:", workbook.sheets.map((s: any) => s.id))
-      return new Response("Active sheet not found", { status: 400 })
+      return new Response(
+        JSON.stringify({ error: "Active sheet not found in workbook" }), 
+        { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
     }
 
-    // Construct system prompt
-    const systemPrompt = `You are an AI assistant for a spreadsheet application. You help users manipulate, analyze, and work with their spreadsheet data.
-
-CRITICAL COMPLETION RULES:
-- After completing a user's request, ALWAYS provide a brief summary of what was accomplished
-- Do NOT continue making changes unless the user asks for something specific
-- When you've fulfilled the request, use the taskComplete tool to signal completion
-- If you're unsure if you're done, ask the user if they need anything else
-
-Current Context:
-- Workbook: "${workbook.name}"
-- Active Sheet: "${activeSheet.name}" (ID: ${activeSheetId})
-- Selected Range: ${selection || "None"}
-- Sheet Data: ${JSON.stringify(activeSheet.data.slice(0, 20))}${activeSheet.data.length > 20 ? "... (truncated)" : ""}
-
-Tools available:
-1. setData - Set raw values in cells (use this to populate data, headers, labels, etc.)
-2. applyFormula - Apply Excel-style formulas to cells (use this for calculations)
-3. askForClarification - Ask user for more information
-4. taskComplete - Signal that the current task is finished
-
-WORKFLOW for requests:
-1. Understand the user's specific request
-2. Execute the necessary tool calls to fulfill it (setData, applyFormula)
-3. Provide conversational updates as you work
-4. When the request is fulfilled, use taskComplete tool with a summary
-5. STOP and wait for the next instruction
-
-IMPORTANT: When working:
-- Explain what you're about to do before each tool call
-- Use setData for headers, labels, and data
-- Use applyFormula for calculations
-- When you've completed what the user asked for, use taskComplete
-- Do NOT keep adding "improvements" unless specifically requested`
+    // Use the comprehensive system prompt from prompt.ts
+    const systemPrompt = createSystemPrompt(workbook, activeSheetId, selection)
 
     // Filter out messages with empty content before conversion
     const filteredMessages = messages.filter(msg => {
@@ -119,7 +100,51 @@ IMPORTANT: When working:
     return result.toUIMessageStreamResponse()
   } catch (error) {
     console.error("Chat API error:", error)
-    return new Response("Internal server error", { status: 500 })
+    
+    // Handle different types of errors
+    if (error instanceof SyntaxError) {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON in request body" }), 
+        { 
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    }
+    
+    if (error instanceof Error && error.message.includes('rate limit')) {
+      return new Response(
+        JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), 
+        { 
+          status: 429,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    }
+    
+    if (error instanceof Error && error.message.includes('quota')) {
+      return new Response(
+        JSON.stringify({ error: "API quota exceeded. Please check your subscription." }), 
+        { 
+          status: 402,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    }
+    
+    // Generic server error
+    return new Response(
+      JSON.stringify({ 
+        error: "Internal server error. Please try again later.",
+        details: process.env.NODE_ENV === 'development' 
+          ? (error instanceof Error ? error.message : String(error))
+          : undefined
+      }), 
+      { 
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    )
   }
 }
 

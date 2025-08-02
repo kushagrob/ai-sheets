@@ -3,9 +3,11 @@
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import type { Sheet } from "@/types/workbook"
+import { evaluateFormula } from "@/lib/formula-engine"
 
 interface GridContainerProps {
   sheet: Sheet
+  workbook: any // Full workbook for formula evaluation
   onCellSelect: (cell: { row: number; col: number }) => void
   onCellUpdate: (sheetId: string, row: number, col: number, value: string) => void
   onUndo: () => boolean
@@ -13,12 +15,40 @@ interface GridContainerProps {
   scrollRef?: React.RefObject<HTMLDivElement>
 }
 
-export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRedo, scrollRef }: GridContainerProps) {
+export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onUndo, onRedo, scrollRef }: GridContainerProps) {
   const [selectedCell, setSelectedCell] = useState({ row: 0, col: 0 })
   const [selectedRange, setSelectedRange] = useState<{ startRow: number; startCol: number; endRow: number; endCol: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [editValue, setEditValue] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Calculate the display value for a cell (evaluate formula if present)
+  const getCellDisplayValue = (cell: any): string => {
+    if (!cell) return ""
+    
+    // If cell has a formula, evaluate it dynamically
+    if (cell.formula) {
+      try {
+        const result = evaluateFormula(cell.formula, workbook, sheet.id)
+        
+        // Handle different types of results
+        if (result === null || result === undefined) {
+          return ""
+        }
+        if (typeof result === 'string' && result.startsWith('#')) {
+          return result // Error values like #ERROR!, #DIV/0!, etc.
+        }
+        
+        return String(result)
+      } catch (error) {
+        console.error("Formula evaluation error:", error)
+        return "#ERROR!"
+      }
+    }
+    
+    // Otherwise return the stored value
+    return String(cell.value === null || cell.value === undefined ? "" : cell.value)
+  }
 
   // Generate column headers (A, B, C, ..., Z, AA, AB, ...)
   const getColumnHeader = (index: number): string => {
@@ -257,8 +287,8 @@ export function GridContainer({ sheet, onCellSelect, onCellUpdate, onUndo, onRed
                 </td>
                 {Array.from({ length: maxCols }, (_, colIndex) => {
                   const cell = sheet.data[rowIndex]?.[colIndex]
-                  // In the grid, always show the computed value, not the formula
-                  const cellValue = cell?.value || ""
+                  // In the grid, always show the computed value (evaluate formulas dynamically)
+                  const cellValue = getCellDisplayValue(cell)
                   const isSelected = isCellInSelection(rowIndex, colIndex)
                   const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex
 

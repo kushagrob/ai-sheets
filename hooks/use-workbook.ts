@@ -2,114 +2,9 @@
 
 import { useState, useEffect } from "react"
 import { useWorkbookHistory } from "./use-workbook-history"
-import type { Workbook, Cell } from "@/types/workbook"
+import type { Workbook } from "@/types/workbook"
 
-// Enhanced formula evaluator
-function evaluateFormula(formula: string, workbook: Workbook, sheetId: string, currentRow: number, currentCol: number): any {
-  const expr = formula.substring(1) // Remove =
-  
-  const sheet = workbook.sheets.find((s) => s.id === sheetId)
-  if (!sheet) return "#ERROR!"
 
-  // Handle SUM function
-  if (expr.startsWith("SUM(") && expr.endsWith(")")) {
-    const rangeStr = expr.slice(4, -1)
-    try {
-      const range = parseRange(rangeStr)
-      let sum = 0
-
-      for (let row = range.startRow; row <= range.endRow; row++) {
-        for (let col = range.startCol; col <= range.endCol; col++) {
-          const cell = sheet.data[row]?.[col]
-          const cellValue = cell?.value
-          if (typeof cellValue === "number") {
-            sum += cellValue
-          } else if (typeof cellValue === "string") {
-            const num = Number.parseFloat(cellValue)
-            if (!isNaN(num)) sum += num
-          }
-        }
-      }
-      return sum
-    } catch (error) {
-      return "#ERROR!"
-    }
-  }
-
-  // Handle simple arithmetic with cell references
-  let result = expr
-  const cellRefs = expr.match(/[A-Z]+\d+/g) || []
-  
-  for (const cellRef of cellRefs) {
-    try {
-      const { row, col } = cellToIndices(cellRef)
-      const cell = sheet.data[row]?.[col]
-      const value = cell?.value || 0
-      result = result.replace(cellRef, String(value))
-    } catch (error) {
-      return "#ERROR!"
-    }
-  }
-
-  try {
-    if (!/^[\d+\-*/().\s]+$/.test(result)) {
-      return "#ERROR!"
-    }
-    return eval(result)
-  } catch (error) {
-    return "#ERROR!"
-  }
-}
-
-function parseRange(range: string): { startRow: number; startCol: number; endRow: number; endCol: number } {
-  const parts = range.split(':')
-  if (parts.length === 1) {
-    const indices = cellToIndices(parts[0])
-    return {
-      startRow: indices.row,
-      startCol: indices.col,
-      endRow: indices.row,
-      endCol: indices.col,
-    }
-  } else if (parts.length === 2) {
-    const start = cellToIndices(parts[0])
-    const end = cellToIndices(parts[1])
-    return {
-      startRow: start.row,
-      startCol: start.col,
-      endRow: end.row,
-      endCol: end.col,
-    }
-  }
-  throw new Error("Invalid range format")
-}
-
-function cellToIndices(cell: string): { row: number; col: number } {
-  const match = cell.match(/^([A-Z]+)(\d+)$/)
-  if (!match) throw new Error("Invalid cell reference")
-  
-  const colStr = match[1]
-  const rowStr = match[2]
-  
-  let col = 0
-  for (let i = 0; i < colStr.length; i++) {
-    col = col * 26 + (colStr.charCodeAt(i) - 64)
-  }
-  col -= 1 // Convert to 0-based
-  
-  const row = parseInt(rowStr) - 1 // Convert to 0-based
-  
-  return { row, col }
-}
-
-// Ensure cell data is properly formatted
-function ensureCellFormat(data: any): Cell {
-  if (data && typeof data === 'object' && 'value' in data) {
-    return data as Cell
-  }
-  // Convert old format to new format
-  return { value: data || null }
-}
 
 // Create a default empty workbook
 const createEmptyWorkbook = (): Workbook => ({
@@ -218,9 +113,8 @@ export function useWorkbook() {
 
           // Handle formula vs value
           if (value.startsWith('=')) {
-            // It's a formula - evaluate and store both
-            const evaluatedValue = evaluateFormula(value, workbook, sheetId, row, col)
-            newData[row][col] = { value: evaluatedValue, formula: value }
+            // It's a formula - store formula, value will be computed dynamically
+            newData[row][col] = { value: null, formula: value }
           } else {
             // It's a regular value
             newData[row][col] = { value: value === "" ? null : value }

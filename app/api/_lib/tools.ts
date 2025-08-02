@@ -43,71 +43,6 @@ function parseRange(range: string): { startRow: number; startCol: number; endRow
   }
 }
 
-// Simple formula evaluator (basic implementation)
-function evaluateFormula(formula: string, workbook: Workbook, sheetId: string): any {
-  // Remove the = sign
-  const expr = formula.substring(1)
-
-  // Handle SUM function
-  if (expr.startsWith("SUM(") && expr.endsWith(")")) {
-    const rangeStr = expr.slice(4, -1)
-    const sheet = workbook.sheets.find((s) => s.id === sheetId)
-    if (!sheet) return "#ERROR!"
-
-    try {
-      const range = parseRange(rangeStr)
-      let sum = 0
-
-      for (let row = range.startRow; row <= range.endRow; row++) {
-        for (let col = range.startCol; col <= range.endCol; col++) {
-          const cell = sheet.data[row]?.[col]
-          const cellValue = cell?.value
-          if (typeof cellValue === "number") {
-            sum += cellValue
-          } else if (typeof cellValue === "string") {
-            const num = Number.parseFloat(cellValue)
-            if (!isNaN(num)) sum += num
-          }
-        }
-      }
-
-      return sum
-    } catch (error) {
-      return "#ERROR!"
-    }
-  }
-
-  // Handle simple arithmetic with cell references
-  // This is a basic implementation - a full formula engine would be much more complex
-  let result = expr
-
-  // Replace cell references with their values
-  const cellRefs = expr.match(/[A-Z]+\d+/g) || []
-  const sheet = workbook.sheets.find((s) => s.id === sheetId)
-  if (sheet) {
-      for (const cellRef of cellRefs) {
-    try {
-      const { row, col } = cellToIndices(cellRef)
-      const cell = sheet.data[row]?.[col]
-      const value = cell?.value || 0
-      result = result.replace(cellRef, String(value))
-    } catch (error) {
-      return "#ERROR!"
-    }
-  }
-  }
-
-  // Evaluate simple arithmetic
-  try {
-    // Basic safety check - only allow numbers, operators, and parentheses
-    if (!/^[\d+\-*/().\s]+$/.test(result)) {
-      return "#ERROR!"
-    }
-    return eval(result)
-  } catch (error) {
-    return "#ERROR!"
-  }
-}
 
 export function createSpreadsheetTools(workbook: Workbook) {
   return {
@@ -116,7 +51,10 @@ export function createSpreadsheetTools(workbook: Workbook) {
       inputSchema: z.object({
         sheetId: z.string().describe('The ID of the sheet to modify.'),
         range: z.string().describe('The cell range, e.g., "A1" or "B2:D10".'),
-        data: z.array(z.array(z.any())).describe('A 2D array of data to set.'),
+        data: z.union([
+          z.array(z.array(z.any())), 
+          z.string()
+        ]).describe('A 2D array of data to set, or a JSON string representation of the array.'),
       }),
       execute: async (params) => {
         const sheet = workbook.sheets.find((s) => s.id === params.sheetId)
@@ -124,7 +62,22 @@ export function createSpreadsheetTools(workbook: Workbook) {
           return { success: false, error: "Sheet not found" }
         }
 
-        const { range, data } = params
+        const { range } = params
+        let data: any[][]
+        
+        // Handle both array and string inputs
+        if (typeof params.data === 'string') {
+          try {
+            data = JSON.parse(params.data)
+            if (!Array.isArray(data) || !Array.isArray(data[0])) {
+              throw new Error("Invalid data format")
+            }
+          } catch (error) {
+            return { success: false, error: "Invalid JSON data format" }
+          }
+        } else {
+          data = params.data as any[][]
+        }
         try {
           const rangeIndices = parseRange(range)
 
@@ -194,13 +147,13 @@ export function createSpreadsheetTools(workbook: Workbook) {
             sheet.data[row].push({ value: null })
           }
 
-          // Evaluate the formula
-          const result = evaluateFormula(formula, workbook, params.sheetId)
-          sheet.data[row][col] = { value: result, formula: formula }
+          // Store the formula without pre-computing the result
+          // The result will be computed dynamically in the grid
+          sheet.data[row][col] = { value: null, formula: formula }
 
           return {
             success: true,
-            message: `Formula ${formula} applied to cell ${cell}, result: ${result}`,
+            message: `Formula ${formula} applied to cell ${cell}`,
           }
         } catch (error) {
           return {
@@ -567,9 +520,9 @@ export function createSpreadsheetTools(workbook: Workbook) {
               formula = formula.replace(/{ROW}/g, (row + 1).toString())
               formula = formula.replace(/{COL}/g, String.fromCharCode(65 + col))
 
-              // Apply the formula
-              const result = evaluateFormula(formula, workbook, params.sheetId)
-              sheet.data[row][col] = { value: result, formula: formula }
+              // Store the formula without pre-computing the result
+              // The result will be computed dynamically in the grid
+              sheet.data[row][col] = { value: null, formula: formula }
               successCount++
             }
           }
@@ -592,7 +545,10 @@ export function createSpreadsheetTools(workbook: Workbook) {
       inputSchema: z.object({
         sheetId: z.string().describe('The ID of the sheet to modify.'),
         startCell: z.string().describe('Top-left cell to start placing data, e.g., "A1".'),
-        data: z.array(z.array(z.union([z.string(), z.number(), z.null()]))).describe('2D array of data to place. Each sub-array is a row.'),
+        data: z.union([
+          z.array(z.array(z.union([z.string(), z.number(), z.null()]))),
+          z.string()
+        ]).describe('2D array of data to place. Each sub-array is a row, or a JSON string representation.'),
       }),
       execute: async (params) => {
         const sheet = workbook.sheets.find((s) => s.id === params.sheetId)
@@ -600,11 +556,27 @@ export function createSpreadsheetTools(workbook: Workbook) {
           return { success: false, error: "Sheet not found" }
         }
 
+        let data: (string | number | null)[][]
+        
+        // Handle both array and string inputs
+        if (typeof params.data === 'string') {
+          try {
+            data = JSON.parse(params.data)
+            if (!Array.isArray(data) || !Array.isArray(data[0])) {
+              throw new Error("Invalid data format")
+            }
+          } catch (error) {
+            return { success: false, error: "Invalid JSON data format" }
+          }
+        } else {
+          data = params.data as (string | number | null)[][]
+        }
+
         try {
           const startIndices = cellToIndices(params.startCell)
           let cellsSet = 0
 
-          for (let dataRow = 0; dataRow < params.data.length; dataRow++) {
+          for (let dataRow = 0; dataRow < data.length; dataRow++) {
             const sheetRow = startIndices.row + dataRow
             
             // Ensure the row exists
@@ -612,7 +584,7 @@ export function createSpreadsheetTools(workbook: Workbook) {
               sheet.data.push([])
             }
 
-            for (let dataCol = 0; dataCol < params.data[dataRow].length; dataCol++) {
+            for (let dataCol = 0; dataCol < data[dataRow].length; dataCol++) {
               const sheetCol = startIndices.col + dataCol
               
               // Ensure the column exists
@@ -620,7 +592,7 @@ export function createSpreadsheetTools(workbook: Workbook) {
                 sheet.data[sheetRow].push({ value: null })
               }
 
-              const value = params.data[dataRow][dataCol]
+              const value = data[dataRow][dataCol]
               sheet.data[sheetRow][sheetCol] = { value: value === "" ? null : value }
               cellsSet++
             }
@@ -639,100 +611,5 @@ export function createSpreadsheetTools(workbook: Workbook) {
       },
     }),
 
-    formatRange: tool({
-      description: 'Apply formatting to a range of cells (headers, currency, percentages, etc.).',
-      inputSchema: z.object({
-        sheetId: z.string().describe('The ID of the sheet to modify.'),
-        range: z.string().describe('Cell range to format, e.g., "A1:D1" or "B5".'),
-        formatType: z.enum(['header', 'currency', 'percentage', 'bold', 'center']).describe('Type of formatting to apply.'),
-      }),
-      execute: async (params) => {
-        // Note: This is a placeholder for formatting functionality
-        // In a real implementation, you'd store formatting metadata
-        return {
-          success: true,
-          message: `Applied ${params.formatType} formatting to range ${params.range}`,
-          note: "Formatting applied (visual formatting would require UI implementation)"
-        }
-      },
-    }),
-
-    createBudgetTemplate: tool({
-      description: 'Create a pre-built budget template with common categories and formulas.',
-      inputSchema: z.object({
-        sheetId: z.string().describe('The ID of the sheet to create the template in.'),
-        templateType: z.enum(['personal', 'business', 'project']).describe('Type of budget template.'),
-      }),
-      execute: async (params) => {
-        const sheet = workbook.sheets.find((s) => s.id === params.sheetId)
-        if (!sheet) {
-          return { success: false, error: "Sheet not found" }
-        }
-
-        try {
-          // Clear the sheet first
-          sheet.data = []
-
-          if (params.templateType === 'personal') {
-            // Create comprehensive personal budget template
-            const templateData = [
-              ["PERSONAL BUDGET TRACKER", "", "", "", "", "", "", ""],
-              ["", "", "", "", "", "", "", ""],
-              ["INCOME", "Budgeted", "Actual", "Difference", "", "SUMMARY", "Budgeted", "Actual"],
-              ["", "", "", "", "", "", "", ""],
-              ["Salary", 5000, 0, "=C5-B5", "", "Total Income", "=B8", "=C8"],
-              ["Side Income", 500, 0, "=C6-B6", "", "Total Expenses", "=B25", "=C25"],
-              ["Other Income", 0, 0, "=C7-B7", "", "Net Income", "=G5-G6", "=H5-H6"],
-              ["TOTAL INCOME", "=SUM(B5:B7)", "=SUM(C5:C7)", "=C8-B8", "", "", "", ""],
-              ["", "", "", "", "", "", "", ""],
-              ["EXPENSES", "Budgeted", "Actual", "Difference", "", "INSIGHTS", "", ""],
-              ["", "", "", "", "", "", "", ""],
-              ["Housing", 1500, 0, "=C12-B12", "", "Savings Rate", "=IF(B8>0,B23/B8*100,0)", "%"],
-              ["Transportation", 400, 0, "=C13-B13", "", "Housing %", "=IF(B8>0,B12/B8*100,0)", "%"],
-              ["Food", 600, 0, "=C14-B14", "", "Emergency Fund", "=B24", ""],
-              ["Utilities", 200, 0, "=C15-B15", "", "Budget Variance", "=G7", ""],
-              ["Insurance", 300, 0, "=C16-B16", "", "", "", ""],
-              ["Healthcare", 150, 0, "=C17-B17", "", "MONTHLY TRACKER", "", ""],
-              ["Entertainment", 200, 0, "=C18-B18", "", "", "", ""],
-              ["Shopping", 150, 0, "=C19-B19", "", "Week 1", 0, ""],
-              ["Debt Payments", 250, 0, "=C20-B20", "", "Week 2", 0, ""],
-              ["Education", 100, 0, "=C21-B21", "", "Week 3", 0, ""],
-              ["Miscellaneous", 100, 0, "=C22-B22", "", "Week 4", 0, ""],
-              ["Savings", 500, 0, "=C23-B23", "", "Total Month", "=SUM(G19:G22)", ""],
-              ["Emergency Fund", 200, 0, "=C24-B24", "", "", "", ""],
-              ["TOTAL EXPENSES", "=SUM(B12:B24)", "=SUM(C12:C24)", "=C25-B25", "", "", "", ""]
-            ]
-
-            // Set all data at once
-            for (let row = 0; row < templateData.length; row++) {
-              if (!sheet.data[row]) sheet.data[row] = []
-              for (let col = 0; col < templateData[row].length; col++) {
-                if (!sheet.data[row][col]) sheet.data[row][col] = { value: null }
-                
-                const value = templateData[row][col]
-                if (typeof value === 'string' && value.startsWith('=')) {
-                  // It's a formula
-                  const result = evaluateFormula(value, workbook, params.sheetId)
-                  sheet.data[row][col] = { value: result, formula: value }
-                } else {
-                  // It's data
-                  sheet.data[row][col] = { value: value === "" ? null : value }
-                }
-              }
-            }
-          }
-
-          return {
-            success: true,
-            message: `Created ${params.templateType} budget template with categories, formulas, and insights`,
-          }
-        } catch (error) {
-          return {
-            success: false,
-            error: `Failed to create budget template: ${error instanceof Error ? error.message : "Unknown error"}`,
-          }
-        }
-      },
-    }),
   };
 }
