@@ -517,8 +517,45 @@ export function createSpreadsheetTools(workbook: Workbook) {
 
               // Generate formula for this cell
               let formula = params.formulaPattern
+              
+              // Replace placeholders first
               formula = formula.replace(/{ROW}/g, (row + 1).toString())
-              formula = formula.replace(/{COL}/g, String.fromCharCode(65 + col))
+              
+              // Generate column letter(s) properly (A, B, ..., Z, AA, AB, ...)
+              let colStr = ""
+              let tempCol = col
+              while (tempCol >= 0) {
+                colStr = String.fromCharCode(65 + (tempCol % 26)) + colStr
+                tempCol = Math.floor(tempCol / 26) - 1
+                if (tempCol < 0) break
+              }
+              formula = formula.replace(/{COL}/g, colStr)
+              
+              // Adjust relative cell references in the formula
+              // Calculate offset from start position
+              const rowOffset = row - startIndices.row
+              const colOffset = col - startIndices.col
+              
+              // Find and adjust cell references (but not absolute ones with $)
+              formula = formula.replace(/(?<!\$)[A-Z]+(?<!\$)\d+/g, (cellRef) => {
+                try {
+                  const { row: refRow, col: refCol } = cellToIndices(cellRef)
+                  const newRow = refRow + rowOffset
+                  const newCol = refCol + colOffset
+                  
+                  // Convert back to cell reference (handle multi-letter columns)
+                  let newColStr = ""
+                  let tempCol = newCol
+                  while (tempCol >= 0) {
+                    newColStr = String.fromCharCode(65 + (tempCol % 26)) + newColStr
+                    tempCol = Math.floor(tempCol / 26) - 1
+                    if (tempCol < 0) break
+                  }
+                  return `${newColStr}${newRow + 1}`
+                } catch {
+                  return cellRef // If parsing fails, keep original
+                }
+              })
 
               // Store the formula without pre-computing the result
               // The result will be computed dynamically in the grid

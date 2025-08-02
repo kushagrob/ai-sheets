@@ -2,8 +2,10 @@ import type { Workbook, Cell } from "@/types/workbook"
 
 // Helper function to convert Excel-style cell reference to row/col indices
 function cellToIndices(cell: string): { row: number; col: number } {
-  const match = cell.match(/^([A-Z]+)(\d+)$/)
-  if (!match) throw new Error("Invalid cell reference")
+  // Handle absolute references by removing $ signs
+  const cleanCell = cell.replace(/\$/g, '')
+  const match = cleanCell.match(/^([A-Z]+)(\d+)$/)
+  if (!match) throw new Error(`Invalid cell reference: ${cell}`)
   
   const colStr = match[1]
   const rowStr = match[2]
@@ -205,8 +207,20 @@ function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, e
   // Handle cell references and simple expressions
   let result = expr
 
+  // First, replace function calls within the expression
+  result = result.replace(/([A-Z]+)\(([^)]*)\)/g, (match, funcName, argsStr) => {
+    try {
+      const funcResult = evaluateFunction(funcName, argsStr, workbook, sheetId, evaluatingCells)
+      return String(toNumber(funcResult))
+    } catch (error) {
+      console.error(`Function evaluation error for ${match}:`, error)
+      return "#ERROR!"
+    }
+  })
+
   // Replace cell references with their values more carefully
-  const cellRefs = expr.match(/[A-Z]+\d+/g) || []
+  // Updated regex to handle absolute references like $B$16, $B16, B$16
+  const cellRefs = result.match(/\$?[A-Z]+\$?\d+/g) || []
   for (const cellRef of cellRefs) {
     const cellValue = getCellValue(workbook, sheetId, cellRef, evaluatingCells)
     
@@ -217,7 +231,9 @@ function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, e
     
     const numValue = toNumber(cellValue)
     // Replace each occurrence individually to avoid issues with similar cell refs
-    result = result.replace(new RegExp('\\b' + cellRef + '\\b', 'g'), String(numValue))
+    // Escape dollar signs in the regex since they're special regex characters
+    const escapedCellRef = cellRef.replace(/\$/g, '\\$')
+    result = result.replace(new RegExp('\\b' + escapedCellRef + '\\b', 'g'), String(numValue))
   }
 
   // Handle quoted strings
@@ -304,7 +320,21 @@ function evaluateArithmetic(expr: string): number | string {
     return 0
   }
   
-  // Validate only contains numbers, decimal points, and operators
+  // Clean up number formatting before evaluation
+  // Remove dollar signs, commas from numbers
+  expr = expr.replace(/\$([0-9,]+(\.\d+)?)/g, (match, number) => {
+    return number.replace(/,/g, '')
+  })
+  
+  // Convert percentages to decimals (20% -> 0.20)
+  expr = expr.replace(/(\d+(\.\d+)?)\s*%/g, (match, number) => {
+    return String(parseFloat(number) / 100)
+  })
+  
+  // Convert Excel-style ^ exponentiation to JavaScript ** exponentiation
+  expr = expr.replace(/\^/g, '**')
+  
+  // Validate only contains numbers, decimal points, and operators (including ** for exponentiation)
   if (!/^[\d+\-*/.()]+$/.test(expr)) {
     return "#ERROR!"
   }
