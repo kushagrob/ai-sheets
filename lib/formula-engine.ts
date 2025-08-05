@@ -21,6 +21,33 @@ function cellToIndices(cell: string): { row: number; col: number } {
   return { row, col }
 }
 
+// Helper function to parse sheet references like 'Purchase Analysis'.B6 or SheetName.B6
+function parseSheetReference(sheetRef: string, workbook: Workbook): { targetSheetId: string | null; cellRef: string } {
+  let sheetName: string
+  let cellRef: string
+  
+  // Handle quoted sheet names like 'Purchase Analysis'.B6
+  if (sheetRef.includes("'")) {
+    const match = sheetRef.match(/^'([^']+)'\.(.+)$/)
+    if (!match) return { targetSheetId: null, cellRef: '' }
+    sheetName = match[1]
+    cellRef = match[2]
+  } else {
+    // Handle unquoted sheet names like SheetName.B6
+    const parts = sheetRef.split('.')
+    if (parts.length !== 2) return { targetSheetId: null, cellRef: '' }
+    sheetName = parts[0]
+    cellRef = parts[1]
+  }
+  
+  // Find the sheet by name
+  const targetSheet = workbook.sheets.find(sheet => sheet.name === sheetName)
+  return {
+    targetSheetId: targetSheet?.id || null,
+    cellRef: cellRef
+  }
+}
+
 // Helper function to parse range like "A1:C3"
 function parseRange(range: string): { startRow: number; startCol: number; endRow: number; endCol: number } {
   if (range.includes(":")) {
@@ -114,11 +141,20 @@ function getCellValue(workbook: Workbook, sheetId: string, cellRef: string, eval
   }
 }
 
-// Convert value to number for calculations
+// Convert value to number for calculations with enhanced $ and % support
 function toNumber(value: any): number {
   if (typeof value === "number") return value
   if (typeof value === "string") {
-    const num = Number.parseFloat(value)
+    // Remove currency symbols, commas, and spaces
+    let cleanValue = value.replace(/[$,\s]/g, '')
+    
+    // Handle percentages - convert to decimal
+    if (cleanValue.endsWith('%')) {
+      const percentNum = Number.parseFloat(cleanValue.slice(0, -1))
+      return isNaN(percentNum) ? 0 : percentNum / 100
+    }
+    
+    const num = Number.parseFloat(cleanValue)
     return isNaN(num) ? 0 : num
   }
   return 0
@@ -191,12 +227,28 @@ export function evaluateFormula(formula: string, workbook: Workbook, sheetId: st
 }
 
 function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): any {
-  // Handle function calls
-  const functionMatch = expr.match(/^([A-Z]+)\((.*)\)$/)
+  // Handle function calls - only if the entire expression is a single function
+  const functionMatch = expr.match(/^([A-Z]+)\(/)
   if (functionMatch) {
     const funcName = functionMatch[1]
-    const argsStr = functionMatch[2]
-    return evaluateFunction(funcName, argsStr, workbook, sheetId, evaluatingCells)
+    const funcStart = 0
+    const argsStart = funcName.length + 1
+    
+    // Find the matching closing parenthesis for this function
+    let parenCount = 1
+    let pos = argsStart
+    
+    while (pos < expr.length && parenCount > 0) {
+      if (expr[pos] === '(') parenCount++
+      else if (expr[pos] === ')') parenCount--
+      pos++
+    }
+    
+    // Check if this function call spans the entire expression
+    if (parenCount === 0 && pos === expr.length) {
+      const argsStr = expr.substring(argsStart, pos - 1)
+      return evaluateFunction(funcName, argsStr, workbook, sheetId, evaluatingCells)
+    }
   }
 
   // Handle string concatenation with & operator
@@ -208,18 +260,44 @@ function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, e
   let result = expr
 
   // First, replace function calls within the expression
-  result = result.replace(/([A-Z]+)\(([^)]*)\)/g, (match, funcName, argsStr) => {
-    try {
-      const funcResult = evaluateFunction(funcName, argsStr, workbook, sheetId, evaluatingCells)
-      return String(toNumber(funcResult))
-    } catch (error) {
-      console.error(`Function evaluation error for ${match}:`, error)
-      return "#ERROR!"
-    }
-  })
+  // Use a helper function to properly match function calls with balanced parentheses
+  result = replaceFunctionCalls(result, workbook, sheetId, evaluatingCells)
 
   // Replace cell references with their values more carefully
-  // Updated regex to handle absolute references like $B$16, $B16, B$16
+  // Handle cross-sheet references first (e.g., 'Sheet Name'.B6 or SheetName.B6)
+  const sheetRefs = result.match(/'[^']+'\.\$?[A-Z]+\$?\d+|[A-Za-z][A-Za-z0-9_]*\.\$?[A-Z]+\$?\d+/g) || []
+  for (const sheetRef of sheetRefs) {
+    const { targetSheetId, cellRef } = parseSheetReference(sheetRef, workbook)
+    if (targetSheetId) {
+      const cellValue = getCellValue(workbook, targetSheetId, cellRef, evaluatingCells)
+      
+      // If the cell value is an error, propagate it
+      if (typeof cellValue === 'string' && cellValue.startsWith('#')) {
+        return cellValue
+      }
+      
+      const numValue = toNumber(cellValue)
+      let replacementValue: string
+      
+      // Always use the clean numeric value to avoid issues with currency symbols and commas
+      if (isNaN(numValue)) {
+        replacementValue = '0'
+      } else {
+        replacementValue = String(numValue)
+      }
+      
+      // Escape special regex characters in the sheet reference
+      const escapedSheetRef = sheetRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      result = result.replace(new RegExp('\\b' + escapedSheetRef + '\\b', 'g'), replacementValue)
+    } else {
+      // Sheet not found, replace with #REF! error
+      const escapedSheetRef = sheetRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      result = result.replace(new RegExp('\\b' + escapedSheetRef + '\\b', 'g'), '#REF!')
+    }
+  }
+  
+  // Then handle regular cell references within current sheet
+  // Regex to handle all Excel reference formats: $B$16, $B16, B$16, B16  
   const cellRefs = result.match(/\$?[A-Z]+\$?\d+/g) || []
   for (const cellRef of cellRefs) {
     const cellValue = getCellValue(workbook, sheetId, cellRef, evaluatingCells)
@@ -229,11 +307,21 @@ function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, e
       return cellValue
     }
     
+    // Convert to number and always use the clean numeric value for replacement
     const numValue = toNumber(cellValue)
+    let replacementValue: string
+    
+    // Always use the clean numeric value to avoid issues with currency symbols and commas
+    if (isNaN(numValue)) {
+      replacementValue = '0'
+    } else {
+      replacementValue = String(numValue)
+    }
+    
     // Replace each occurrence individually to avoid issues with similar cell refs
     // Escape dollar signs in the regex since they're special regex characters
     const escapedCellRef = cellRef.replace(/\$/g, '\\$')
-    result = result.replace(new RegExp('\\b' + escapedCellRef + '\\b', 'g'), String(numValue))
+    result = result.replace(new RegExp('\\b' + escapedCellRef + '\\b', 'g'), replacementValue)
   }
 
   // Handle quoted strings
@@ -241,9 +329,47 @@ function evaluateExpression(expr: string, workbook: Workbook, sheetId: string, e
     return result.trim().slice(1, -1) // Remove quotes
   }
 
+  // Handle currency values like $123.45
+  if (/^\$\d+(\.\d+)?$/.test(result.trim())) {
+    return parseFloat(result.trim().replace('$', ''))
+  }
+
+  // Handle percentage values like 25%
+  if (/^\d+(\.\d+)?%$/.test(result.trim())) {
+    const percentValue = parseFloat(result.trim().replace('%', ''))
+    return percentValue / 100
+  }
+
   // If result is just a number after substitution, return it directly
   if (/^-?\d+(\.\d+)?$/.test(result.trim())) {
     return parseFloat(result.trim())
+  }
+
+  // If result is a simple value (not an arithmetic expression), return it as-is
+  if (!/[+\-*/()^]/.test(result.trim())) {
+    // Check if it's a number, currency, or percentage
+    const trimmed = result.trim()
+    
+    // Try parsing as currency
+    if (trimmed.startsWith('$')) {
+      const num = parseFloat(trimmed.replace(/[$,]/g, ''))
+      if (!isNaN(num)) return num
+    }
+    
+    // Try parsing as percentage
+    if (trimmed.endsWith('%')) {
+      const num = parseFloat(trimmed.replace('%', ''))
+      if (!isNaN(num)) return num / 100
+    }
+    
+    // Try parsing as regular number
+    const num = parseFloat(trimmed)
+    if (!isNaN(num)) {
+      return num
+    }
+    
+    // Otherwise return as string
+    return trimmed
   }
 
   // Safe arithmetic evaluation (avoid eval)
@@ -269,6 +395,69 @@ function evaluateStringConcatenation(expr: string, workbook: Workbook, sheetId: 
     }
     
     result += toString(partResult)
+  }
+  
+  return result
+}
+
+// Helper function to replace function calls with proper parentheses handling
+function replaceFunctionCalls(expr: string, workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): string {
+  let result = expr
+  let changed = true
+  
+  // Keep replacing functions until no more changes
+  while (changed) {
+    changed = false
+    let i = 0
+    
+    while (i < result.length) {
+      // Look for function names (uppercase letters followed by opening parenthesis)
+      const remaining = result.substring(i)
+      const funcMatch = remaining.match(/^([A-Z]+)\(/)
+      
+      if (funcMatch) {
+        const funcName = funcMatch[1]
+        const funcStart = i
+        const argsStart = i + funcName.length + 1 // Position after the opening parenthesis
+        
+        // Find the matching closing parenthesis
+        let parenCount = 1
+        let pos = argsStart
+        
+        while (pos < result.length && parenCount > 0) {
+          if (result[pos] === '(') parenCount++
+          else if (result[pos] === ')') parenCount--
+          pos++
+        }
+        
+        if (parenCount === 0) {
+          // Found matching parenthesis
+          const argsEnd = pos - 1
+          const funcEnd = pos
+          const argsStr = result.substring(argsStart, argsEnd)
+          const fullMatch = result.substring(funcStart, funcEnd)
+          
+          try {
+            const funcResult = evaluateFunction(funcName, argsStr, workbook, sheetId, evaluatingCells)
+            const replacement = String(toNumber(funcResult))
+            result = result.substring(0, funcStart) + replacement + result.substring(funcEnd)
+            changed = true
+            break // Start over after making a change
+          } catch (error) {
+            console.error(`Function evaluation error for ${fullMatch}:`, error)
+            const replacement = "#ERROR!"
+            result = result.substring(0, funcStart) + replacement + result.substring(funcEnd)
+            changed = true
+            break // Start over after making a change
+          }
+        } else {
+          // Unmatched parentheses, move to next character
+          i++
+        }
+      } else {
+        i++
+      }
+    }
   }
   
   return result
@@ -321,21 +510,32 @@ function evaluateArithmetic(expr: string): number | string {
   }
   
   // Clean up number formatting before evaluation
-  // Remove dollar signs, commas from numbers
+  // Handle currency symbols - remove $ and commas from numbers like $1,234.56
   expr = expr.replace(/\$([0-9,]+(\.\d+)?)/g, (match, number) => {
     return number.replace(/,/g, '')
   })
   
-  // Convert percentages to decimals (20% -> 0.20)
+  // Handle standalone currency values without operators (e.g., just "$100")
+  expr = expr.replace(/^\$([0-9,]+(\.\d+)?)$/, (match, number) => {
+    return number.replace(/,/g, '')
+  })
+  
+  // Convert percentages to decimals (20% -> 0.20, 15.5% -> 0.155)
   expr = expr.replace(/(\d+(\.\d+)?)\s*%/g, (match, number) => {
+    return String(parseFloat(number) / 100)
+  })
+  
+  // Handle standalone percentage values (e.g., just "20%")
+  expr = expr.replace(/^(\d+(\.\d+)?)\s*%$/, (match, number) => {
     return String(parseFloat(number) / 100)
   })
   
   // Convert Excel-style ^ exponentiation to JavaScript ** exponentiation
   expr = expr.replace(/\^/g, '**')
   
-  // Validate only contains numbers, decimal points, and operators (including ** for exponentiation)
-  if (!/^[\d+\-*/.()]+$/.test(expr)) {
+  // Validate only contains allowed characters for arithmetic expressions
+  // Allow digits, operators (+, -, *, /, **), decimal points, parentheses, currency ($), percentage (%), and commas
+  if (!/^[\d+\-*/.()$%, ]*$/.test(expr)) {
     return "#ERROR!"
   }
 
@@ -400,16 +600,16 @@ function evaluateFunction(funcName: string, argsStr: string, workbook: Workbook,
 
     // LOGICAL FUNCTIONS
     case "IF":
-      return ifFunction(args, workbook, sheetId)
+      return ifFunction(args, workbook, sheetId, evaluatingCells)
     
     case "AND":
-      return andFunction(args, workbook, sheetId)
+      return andFunction(args, workbook, sheetId, evaluatingCells)
     
     case "OR":
-      return orFunction(args, workbook, sheetId)
+      return orFunction(args, workbook, sheetId, evaluatingCells)
     
     case "NOT":
-      return notFunction(args, workbook, sheetId)
+      return notFunction(args, workbook, sheetId, evaluatingCells)
 
     // LOOKUP FUNCTIONS
     case "VLOOKUP":
@@ -426,19 +626,19 @@ function evaluateFunction(funcName: string, argsStr: string, workbook: Workbook,
 
     // FINANCIAL FUNCTIONS
     case "NPV":
-      return npvFunction(args, workbook, sheetId)
+      return npvFunction(args, workbook, sheetId, evaluatingCells)
     
     case "IRR":
-      return irrFunction(args, workbook, sheetId)
+      return irrFunction(args, workbook, sheetId, evaluatingCells)
     
     case "PMT":
-      return pmtFunction(args, workbook, sheetId)
+      return pmtFunction(args, workbook, sheetId, evaluatingCells)
     
     case "PV":
-      return pvFunction(args, workbook, sheetId)
+      return pvFunction(args, workbook, sheetId, evaluatingCells)
     
     case "FV":
-      return fvFunction(args, workbook, sheetId)
+      return fvFunction(args, workbook, sheetId, evaluatingCells)
 
     // DATE/TIME FUNCTIONS
     case "TODAY":
@@ -511,7 +711,17 @@ function evaluateFunction(funcName: string, argsStr: string, workbook: Workbook,
       return sqrtFunction(args, workbook, sheetId)
     
     case "POWER":
-      return powerFunction(args, workbook, sheetId)
+      return powerFunction(args, workbook, sheetId, evaluatingCells)
+
+    // REFERENCE FUNCTIONS
+    case "ROW":
+      return rowFunction(args, workbook, sheetId, evaluatingCells)
+    
+    case "COLUMN":
+      return columnFunction(args, workbook, sheetId, evaluatingCells)
+    
+    case "INDIRECT":
+      return indirectFunction(args, workbook, sheetId, evaluatingCells)
 
     default:
       throw new Error(`Unknown function: ${funcName}`)
@@ -655,18 +865,18 @@ function varFunction(args: string[], workbook: Workbook, sheetId: string): numbe
 
 // LOGICAL FUNCTION IMPLEMENTATIONS
 
-function ifFunction(args: string[], workbook: Workbook, sheetId: string): any {
+function ifFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): any {
   if (args.length < 2) throw new Error("IF requires at least 2 arguments")
   
-  const condition = evaluateCondition(args[0], workbook, sheetId)
-  const trueValue = args[1] ? evaluateExpression(args[1], workbook, sheetId) : true
-  const falseValue = args[2] ? evaluateExpression(args[2], workbook, sheetId) : false
+  const condition = evaluateCondition(args[0], workbook, sheetId, evaluatingCells)
+  const trueValue = args[1] ? evaluateExpression(args[1], workbook, sheetId, evaluatingCells) : true
+  const falseValue = args[2] ? evaluateExpression(args[2], workbook, sheetId, evaluatingCells) : false
   
   return condition ? trueValue : falseValue
 }
 
 // Helper function to evaluate conditions with comparison operators
-function evaluateCondition(expr: string, workbook: Workbook, sheetId: string): boolean {
+function evaluateCondition(expr: string, workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): boolean {
   // Handle comparison operators
   const comparisonOps = ['>=', '<=', '<>', '!=', '=', '>', '<']
   
@@ -674,8 +884,8 @@ function evaluateCondition(expr: string, workbook: Workbook, sheetId: string): b
     if (expr.includes(op)) {
       const parts = expr.split(op)
       if (parts.length === 2) {
-        const left = evaluateExpression(parts[0].trim(), workbook, sheetId)
-        const right = evaluateExpression(parts[1].trim(), workbook, sheetId)
+        const left = evaluateExpression(parts[0].trim(), workbook, sheetId, evaluatingCells)
+        const right = evaluateExpression(parts[1].trim(), workbook, sheetId, evaluatingCells)
         
         // If either side is an error, return false
         if (typeof left === 'string' && left.startsWith('#') ||
@@ -697,7 +907,7 @@ function evaluateCondition(expr: string, workbook: Workbook, sheetId: string): b
   }
   
   // If no comparison operator, evaluate as boolean
-  const result = evaluateExpression(expr, workbook, sheetId)
+  const result = evaluateExpression(expr, workbook, sheetId, evaluatingCells)
   
   // If result is an error, return false
   if (typeof result === 'string' && result.startsWith('#')) {
@@ -707,25 +917,25 @@ function evaluateCondition(expr: string, workbook: Workbook, sheetId: string): b
   return Boolean(result)
 }
 
-function andFunction(args: string[], workbook: Workbook, sheetId: string): boolean {
+function andFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): boolean {
   for (const arg of args) {
-    const value = evaluateExpression(arg, workbook, sheetId)
+    const value = evaluateExpression(arg, workbook, sheetId, evaluatingCells)
     if (!value) return false
   }
   return true
 }
 
-function orFunction(args: string[], workbook: Workbook, sheetId: string): boolean {
+function orFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): boolean {
   for (const arg of args) {
-    const value = evaluateExpression(arg, workbook, sheetId)
+    const value = evaluateExpression(arg, workbook, sheetId, evaluatingCells)
     if (value) return true
   }
   return false
 }
 
-function notFunction(args: string[], workbook: Workbook, sheetId: string): boolean {
+function notFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): boolean {
   if (args.length !== 1) throw new Error("NOT requires exactly 1 argument")
-  const value = evaluateExpression(args[0], workbook, sheetId)
+  const value = evaluateExpression(args[0], workbook, sheetId, evaluatingCells)
   return !value
 }
 
@@ -905,21 +1115,21 @@ function matchFunction(args: string[], workbook: Workbook, sheetId: string): num
 
 // FINANCIAL FUNCTION IMPLEMENTATIONS
 
-function npvFunction(args: string[], workbook: Workbook, sheetId: string): number {
+function npvFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number {
   if (args.length < 2) throw new Error("NPV requires at least 2 arguments")
   
-  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId))
+  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
   let npv = 0
   
   for (let i = 1; i < args.length; i++) {
-    const value = toNumber(evaluateExpression(args[i], workbook, sheetId))
+    const value = toNumber(evaluateExpression(args[i], workbook, sheetId, evaluatingCells))
     npv += value / Math.pow(1 + rate, i)
   }
   
   return npv
 }
 
-function irrFunction(args: string[], workbook: Workbook, sheetId: string): number | string {
+function irrFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number | string {
   // IRR calculation using Newton-Raphson method
   const values: number[] = []
   
@@ -928,7 +1138,7 @@ function irrFunction(args: string[], workbook: Workbook, sheetId: string): numbe
       const range = parseRange(arg)
       values.push(...getCellValues(workbook, sheetId, range))
     } else {
-      const value = toNumber(evaluateExpression(arg, workbook, sheetId))
+      const value = toNumber(evaluateExpression(arg, workbook, sheetId, evaluatingCells))
       values.push(value)
     }
   }
@@ -955,14 +1165,14 @@ function irrFunction(args: string[], workbook: Workbook, sheetId: string): numbe
   return "#NUM!"
 }
 
-function pmtFunction(args: string[], workbook: Workbook, sheetId: string): number {
+function pmtFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number {
   if (args.length < 3) throw new Error("PMT requires at least 3 arguments")
   
-  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId))
-  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId))
-  const pv = toNumber(evaluateExpression(args[2], workbook, sheetId))
-  const fv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId)) : 0
-  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId)) : 0
+  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
+  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId, evaluatingCells))
+  const pv = toNumber(evaluateExpression(args[2], workbook, sheetId, evaluatingCells))
+  const fv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId, evaluatingCells)) : 0
+  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId, evaluatingCells)) : 0
   
   if (rate === 0) {
     return -(pv + fv) / nper
@@ -972,14 +1182,14 @@ function pmtFunction(args: string[], workbook: Workbook, sheetId: string): numbe
   return (-pv * pvif - fv) / (((pvif - 1) / rate) * (1 + rate * type))
 }
 
-function pvFunction(args: string[], workbook: Workbook, sheetId: string): number {
+function pvFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number {
   if (args.length < 3) throw new Error("PV requires at least 3 arguments")
   
-  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId))
-  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId))
-  const pmt = toNumber(evaluateExpression(args[2], workbook, sheetId))
-  const fv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId)) : 0
-  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId)) : 0
+  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
+  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId, evaluatingCells))
+  const pmt = toNumber(evaluateExpression(args[2], workbook, sheetId, evaluatingCells))
+  const fv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId, evaluatingCells)) : 0
+  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId, evaluatingCells)) : 0
   
   if (rate === 0) {
     return -pmt * nper - fv
@@ -989,14 +1199,14 @@ function pvFunction(args: string[], workbook: Workbook, sheetId: string): number
   return (-pmt * (((pvif - 1) / rate) * (1 + rate * type)) - fv) / pvif
 }
 
-function fvFunction(args: string[], workbook: Workbook, sheetId: string): number {
+function fvFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number {
   if (args.length < 3) throw new Error("FV requires at least 3 arguments")
   
-  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId))
-  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId))
-  const pmt = toNumber(evaluateExpression(args[2], workbook, sheetId))
-  const pv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId)) : 0
-  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId)) : 0
+  const rate = toNumber(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
+  const nper = toNumber(evaluateExpression(args[1], workbook, sheetId, evaluatingCells))
+  const pmt = toNumber(evaluateExpression(args[2], workbook, sheetId, evaluatingCells))
+  const pv = args[3] ? toNumber(evaluateExpression(args[3], workbook, sheetId, evaluatingCells)) : 0
+  const type = args[4] ? toNumber(evaluateExpression(args[4], workbook, sheetId, evaluatingCells)) : 0
   
   if (rate === 0) {
     return -pv - pmt * nper
@@ -1242,13 +1452,74 @@ function sqrtFunction(args: string[], workbook: Workbook, sheetId: string): numb
   return Math.sqrt(number)
 }
 
-function powerFunction(args: string[], workbook: Workbook, sheetId: string): number {
+function powerFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number {
   if (args.length !== 2) throw new Error("POWER requires exactly 2 arguments")
   
-  const number = toNumber(evaluateExpression(args[0], workbook, sheetId))
-  const power = toNumber(evaluateExpression(args[1], workbook, sheetId))
+  const number = toNumber(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
+  const power = toNumber(evaluateExpression(args[1], workbook, sheetId, evaluatingCells))
   
   return Math.pow(number, power)
+}
+
+// REFERENCE FUNCTION IMPLEMENTATIONS
+
+function rowFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number | string {
+  if (args.length === 0) {
+    // ROW() without arguments - need to get current cell position
+    // This is a limitation - we don't have context of which cell is calling this
+    // For now, return 1 as default
+    return 1
+  }
+  
+  // ROW(reference) - return the row number of the reference
+  const cellRef = args[0].trim()
+  try {
+    const { row } = cellToIndices(cellRef)
+    return row + 1 // Convert back to 1-based
+  } catch {
+    return "#REF!"
+  }
+}
+
+function columnFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): number | string {
+  if (args.length === 0) {
+    // COLUMN() without arguments - need to get current cell position
+    // This is a limitation - we don't have context of which cell is calling this
+    // For now, return 1 as default
+    return 1
+  }
+  
+  // COLUMN(reference) - return the column number of the reference
+  const cellRef = args[0].trim()
+  try {
+    const { col } = cellToIndices(cellRef)
+    return col + 1 // Convert back to 1-based
+  } catch {
+    return "#REF!"
+  }
+}
+
+function indirectFunction(args: string[], workbook: Workbook, sheetId: string, evaluatingCells?: Set<string>): any {
+  if (args.length === 0) return "#REF!"
+  
+  const refText = toString(evaluateExpression(args[0], workbook, sheetId, evaluatingCells))
+  
+  try {
+    // Handle sheet references in INDIRECT
+    if (refText.includes("'") || refText.includes(".")) {
+      const { targetSheetId, cellRef } = parseSheetReference(refText, workbook)
+      if (targetSheetId) {
+        return getCellValue(workbook, targetSheetId, cellRef, evaluatingCells)
+      } else {
+        return "#REF!"
+      }
+    } else {
+      // Simple cell reference
+      return getCellValue(workbook, sheetId, refText, evaluatingCells)
+    }
+  } catch {
+    return "#REF!"
+  }
 }
 
 // Helper function for conditional criteria

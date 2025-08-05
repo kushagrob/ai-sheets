@@ -16,7 +16,7 @@ export function useWorkbookHistory(initialWorkbook: Workbook | null) {
 
   // Initialize history when workbook is first set
   useEffect(() => {
-    if (initialWorkbook && history.length === 0) {
+    if (initialWorkbook && history.length === 0 && currentIndex === -1) {
       const entry: HistoryEntry = {
         workbook: JSON.parse(JSON.stringify(initialWorkbook)),
         timestamp: Date.now(),
@@ -24,36 +24,38 @@ export function useWorkbookHistory(initialWorkbook: Workbook | null) {
       }
       setHistory([entry])
       setCurrentIndex(0)
+      setWorkbook(initialWorkbook)
     }
-  }, [initialWorkbook, history.length])
+  }, [initialWorkbook, history.length, currentIndex])
 
   const addToHistory = useCallback(
     (newWorkbook: Workbook, action: string) => {
       console.log("Adding to history:", action)
 
+      const entry: HistoryEntry = {
+        workbook: JSON.parse(JSON.stringify(newWorkbook)), // Deep clone
+        timestamp: Date.now(),
+        action,
+      }
+
       setHistory((prev) => {
         // Remove any future history if we're not at the end
         const newHistory = prev.slice(0, currentIndex + 1)
-
-        // Add new entry
-        const entry: HistoryEntry = {
-          workbook: JSON.parse(JSON.stringify(newWorkbook)), // Deep clone
-          timestamp: Date.now(),
-          action,
-        }
-
         const updatedHistory = [...newHistory, entry]
 
         // Limit history to 50 entries
         if (updatedHistory.length > 50) {
           updatedHistory.shift()
+          // Adjust currentIndex if we removed from the beginning
+          setCurrentIndex(Math.max(0, currentIndex))
           return updatedHistory
         }
 
+        // Update current index
+        setCurrentIndex(updatedHistory.length - 1)
         return updatedHistory
       })
 
-      setCurrentIndex((prev) => prev + 1)
       setWorkbook(newWorkbook)
     },
     [currentIndex],

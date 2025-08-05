@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useWorkbookHistory } from "./use-workbook-history"
 import type { Workbook } from "@/types/workbook"
 
@@ -24,7 +24,8 @@ const createEmptyWorkbook = (): Workbook => ({
 export function useWorkbook() {
   const [activeSheetId, setActiveSheetId] = useState<string>("")
   const [isInitialized, setIsInitialized] = useState(false)
-  const { workbook, setWorkbook, undo, redo, canUndo, canRedo } = useWorkbookHistory(null)
+  const emptyWorkbook = useMemo(() => createEmptyWorkbook(), [])
+  const { workbook, setWorkbook, undo, redo, canUndo, canRedo } = useWorkbookHistory(emptyWorkbook)
 
   useEffect(() => {
     if (!isInitialized) {
@@ -38,23 +39,19 @@ export function useWorkbook() {
           setActiveSheetId(parsed.sheets[0]?.id || "")
         } catch (error) {
           console.error("Failed to parse saved workbook:", error)
-          // Fall back to empty workbook
-          const emptyWorkbook = createEmptyWorkbook()
+          // Fall back to the default empty workbook we already have
           localStorage.setItem("workbook", JSON.stringify(emptyWorkbook))
-          setWorkbook(emptyWorkbook, "Created empty workbook")
           setActiveSheetId(emptyWorkbook.sheets[0].id)
         }
       } else {
-        // Create new empty workbook
-        const emptyWorkbook = createEmptyWorkbook()
+        // Use the default empty workbook and save it
         localStorage.setItem("workbook", JSON.stringify(emptyWorkbook))
-        setWorkbook(emptyWorkbook, "Created empty workbook")
         setActiveSheetId(emptyWorkbook.sheets[0].id)
       }
 
       setIsInitialized(true)
     }
-  }, [setWorkbook, isInitialized])
+  }, [setWorkbook, isInitialized, emptyWorkbook])
 
   // Save to localStorage whenever workbook changes
   useEffect(() => {
