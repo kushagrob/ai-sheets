@@ -29,29 +29,15 @@ export function useWorkbook() {
 
   useEffect(() => {
     if (!isInitialized) {
-      // Try to load from localStorage first
-      const savedWorkbook = localStorage.getItem("workbook")
-
-      if (savedWorkbook) {
-        try {
-          const parsed = JSON.parse(savedWorkbook)
-          setWorkbook(parsed, "Loaded from storage")
-          setActiveSheetId(parsed.sheets[0]?.id || "")
-        } catch (error) {
-          console.error("Failed to parse saved workbook:", error)
-          // Fall back to the default empty workbook we already have
-          localStorage.setItem("workbook", JSON.stringify(emptyWorkbook))
-          setActiveSheetId(emptyWorkbook.sheets[0].id)
-        }
-      } else {
-        // Use the default empty workbook and save it
-        localStorage.setItem("workbook", JSON.stringify(emptyWorkbook))
-        setActiveSheetId(emptyWorkbook.sheets[0].id)
-      }
-
+      // Always start with a fresh empty workbook on page refresh
+      const freshWorkbook = createEmptyWorkbook()
+      setWorkbook(freshWorkbook, "Started with fresh workbook")
+      setActiveSheetId(freshWorkbook.sheets[0].id)
+      localStorage.setItem("workbook", JSON.stringify(freshWorkbook))
+      
       setIsInitialized(true)
     }
-  }, [setWorkbook, isInitialized, emptyWorkbook])
+  }, [setWorkbook, isInitialized])
 
   // Save to localStorage whenever workbook changes
   useEffect(() => {
