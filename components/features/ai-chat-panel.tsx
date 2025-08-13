@@ -134,7 +134,7 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
                 )}
               </div>
             </div>
-            <p className="text-sm text-gray-500">Ask Shortcut to do your work for you</p>
+            <p className="text-sm text-gray-500">Ask AI Sheets to do your work for you</p>
           </div>
           <div className="flex items-center space-x-2">
             <Button 
@@ -155,7 +155,7 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
         {/* Tip Section */}
         <div className="p-4 bg-blue-50 border-b">
           <p className="text-sm text-blue-800">
-            <strong>Tip:</strong> Ask Shortcut to do your work for you. Most tasks take 3-15 minutes to complete. All
+            <strong>Tip:</strong> Ask AI Sheets to do your work for you. Most tasks take 3-15 minutes to complete. All
             changes can be reverted.
           </p>
         </div>

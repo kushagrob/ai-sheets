@@ -1,7 +1,12 @@
 {
-  "name": "my-v0-project",
+  "name": "ai-sheets",
   "version": "0.1.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/ai-sheets.git"
+  },
+  "description": "AI-powered spreadsheet application with intelligent data analysis and manipulation",
   "scripts": {
     "build": "next build",
     "dev": "next dev",

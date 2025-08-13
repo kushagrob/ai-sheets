@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Next.js spreadsheet application with AI chat integration, built using TypeScript, React, and Tailwind CSS. The app provides a Google Sheets-like interface with AI assistance powered by Anthropic's Claude API for data analysis and manipulation.
+AI Sheets is a Next.js spreadsheet application with AI chat integration, built using TypeScript, React, and Tailwind CSS. The app provides a Google Sheets-like interface with AI assistance powered by Anthropic's Claude API for data analysis and manipulation.
 
 ## Development Commands
 
