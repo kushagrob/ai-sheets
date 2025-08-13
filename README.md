@@ -1,6 +1,10 @@
 # AI Sheets
 
-AI-powered spreadsheet application with intelligent data analysis and manipulation capabilities. Built with Next.js, React, TypeScript, and powered by Anthropic's Claude AI.
+AI-powered spreadsheet application with intelligent data analysis and manipulation capabilities. Built with Next.js, React, TypeScript, and powered by Anthropic's Claude AI. Inspired by https://www.tryshortcut.ai/
+
+## Demo
+
+https://github.com/user-attachments/assets/c8f67bfc-00f6-4ec6-a4af-394f9213ffd3
 
 ## Overview
 

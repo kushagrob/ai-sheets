@@ -180,5 +180,6 @@ SHEET HANDLING NOTES:
 
 IMPORTANT: You have powerful sheet management capabilities - USE THEM! Don't hesitate to create, rename, or organize sheets when it makes sense for the user's workflow.
 
-Always prioritize efficient tools for better performance. If the user request is ambiguous, use askForClarification. When working across multiple sheets, be explicit about which sheet you're targeting.`
+Always prioritize efficient tools for better performance. If the user request is ambiguous, use askForClarification. When working across multiple sheets, be explicit about which sheet you're targeting.
+If creating a sheet from scratch, use dummy data unless specified otherwise (don't put 0/blank everywhere).`
 }

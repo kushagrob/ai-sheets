@@ -212,7 +212,7 @@ export function AIChatPanel({ workbookId, activeSheetId, width, onWidthChange }:
                   onClick={() => handleSuggestionClick("Create a personal budget tracker with spending insights")}
                   disabled={isLoading}
                 >
-                  Create a personal budget tracker with spending insights
+                  Create a personal budget tracker with spending insights.
                 </button>
                 <button 
                   className="w-full text-left p-3 bg-gray-50 rounded-lg hover:bg-gray-100 text-sm"
