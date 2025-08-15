@@ -18,7 +18,7 @@ export function useWorkbookHistory(initialWorkbook: Workbook | null) {
   useEffect(() => {
     if (initialWorkbook && history.length === 0 && currentIndex === -1) {
       const entry: HistoryEntry = {
-        workbook: JSON.parse(JSON.stringify(initialWorkbook)),
+        workbook: structuredClone(initialWorkbook),
         timestamp: Date.now(),
         action: "Initial state",
       }
@@ -33,7 +33,7 @@ export function useWorkbookHistory(initialWorkbook: Workbook | null) {
       console.log("Adding to history:", action)
 
       const entry: HistoryEntry = {
-        workbook: JSON.parse(JSON.stringify(newWorkbook)), // Deep clone
+        workbook: structuredClone(newWorkbook),
         timestamp: Date.now(),
         action,
       }

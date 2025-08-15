@@ -1,6 +1,6 @@
 "use client"
 
-import type React from "react"
+import React from "react"
 import { useState, useRef, useEffect } from "react"
 import type { Sheet } from "@/types/workbook"
 import { evaluateFormula } from "@/lib/formula-engine"
@@ -15,7 +15,7 @@ interface GridContainerProps {
   scrollRef?: React.RefObject<HTMLDivElement>
 }
 
-export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onUndo, onRedo, scrollRef }: GridContainerProps) {
+export const GridContainer = React.memo(function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onUndo, onRedo, scrollRef }: GridContainerProps) {
   const [selectedCell, setSelectedCell] = useState({ row: 0, col: 0 })
   const [selectedRange, setSelectedRange] = useState<{ startRow: number; startCol: number; endRow: number; endCol: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
@@ -324,4 +324,4 @@ export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onU
       </div>
     </div>
   )
-}
+})
