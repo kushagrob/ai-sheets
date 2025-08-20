@@ -1,9 +1,10 @@
 "use client"
 
 import type React from "react"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import type { Sheet } from "@/types/workbook"
 import { evaluateFormula } from "@/lib/formula-engine"
+import { CanvasGridRenderer, DEFAULT_GRID_CONFIG, type CellPosition } from "@/lib/canvas-grid"
 
 interface GridContainerProps {
   sheet: Sheet
@@ -20,7 +21,14 @@ export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onU
   const [selectedRange, setSelectedRange] = useState<{ startRow: number; startCol: number; endRow: number; endCol: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [editValue, setEditValue] = useState("")
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [editInputPosition, setEditInputPosition] = useState({ x: 0, y: 0, width: 0, height: 0 })
+  
   const inputRef = useRef<HTMLInputElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const rendererRef = useRef<CanvasGridRenderer | null>(null)
 
   // Calculate the display value for a cell (evaluate formula if present)
   const getCellDisplayValue = (cell: any): string => {
@@ -50,16 +58,74 @@ export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onU
     return String(cell.value === null || cell.value === undefined ? "" : cell.value)
   }
 
-  // Generate column headers (A, B, C, ..., Z, AA, AB, ...)
-  const getColumnHeader = (index: number): string => {
-    let result = ""
-    let num = index
-    while (num >= 0) {
-      result = String.fromCharCode(65 + (num % 26)) + result
-      num = Math.floor(num / 26) - 1
-      if (num < 0) break
+  useEffect(() => {
+    if (canvasRef.current && !rendererRef.current) {
+      rendererRef.current = new CanvasGridRenderer(canvasRef.current, DEFAULT_GRID_CONFIG)
     }
-    return result
+  }, [])
+
+  // Handle canvas resize
+  useEffect(() => {
+    const handleResize = () => {
+      if (canvasRef.current && rendererRef.current) {
+        const rect = canvasRef.current.getBoundingClientRect()
+        canvasRef.current.width = rect.width * (window.devicePixelRatio || 1)
+        canvasRef.current.height = rect.height * (window.devicePixelRatio || 1)
+        canvasRef.current.style.width = rect.width + 'px'
+        canvasRef.current.style.height = rect.height + 'px'
+        const ctx = canvasRef.current.getContext('2d')!
+        ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1)
+        renderCanvas()
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  const renderCanvas = useCallback(() => {
+    if (!rendererRef.current || !canvasRef.current) return
+
+    const rect = canvasRef.current.getBoundingClientRect()
+    const viewport = rendererRef.current.getViewport(scrollLeft, scrollTop, rect.width, rect.height)
+    
+    rendererRef.current.render(
+      sheet.data,
+      selectedCell,
+      selectedRange,
+      viewport,
+      getCellDisplayValue
+    )
+  }, [sheet.data, selectedCell, selectedRange, scrollLeft, scrollTop, getCellDisplayValue])
+
+  useEffect(() => {
+    renderCanvas()
+  }, [renderCanvas])
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!rendererRef.current || !canvasRef.current) return
+
+    const rect = canvasRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    
+    const cellPos = rendererRef.current.getCellFromPoint(x, y, scrollLeft, scrollTop)
+    if (cellPos) {
+      handleCellClick(cellPos.row, cellPos.col)
+    }
+  }
+
+  const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!rendererRef.current || !canvasRef.current) return
+
+    const rect = canvasRef.current.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    
+    const cellPos = rendererRef.current.getCellFromPoint(x, y, scrollLeft, scrollTop)
+    if (cellPos) {
+      handleCellDoubleClick(cellPos.row, cellPos.col)
+    }
   }
 
   const handleCellClick = (row: number, col: number) => {
@@ -92,6 +158,16 @@ export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onU
     setEditValue(displayValue)
     setSelectedCell({ row, col })
     onCellSelect({ row, col })
+    
+    if (rendererRef.current) {
+      const bounds = rendererRef.current.getCellBounds(row, col, scrollLeft, scrollTop)
+      setEditInputPosition({
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height
+      })
+    }
   }
 
   const handleEditSubmit = () => {
@@ -244,83 +320,62 @@ export function GridContainer({ sheet, workbook, onCellSelect, onCellUpdate, onU
     }
   }, [editingCell])
 
+  // Handle scroll events
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement
+    setScrollLeft(target.scrollLeft)
+    setScrollTop(target.scrollTop)
+  }
+
   useEffect(() => {
     // Auto-focus the grid container when component mounts
-    const gridContainer = document.querySelector('[tabindex="0"]') as HTMLElement
-    if (gridContainer) {
-      gridContainer.focus()
+    const element = scrollRef?.current || containerRef.current
+    if (element) {
+      element.focus()
     }
   }, [])
 
   return (
     <div
-      ref={scrollRef}
-      className="flex-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset overflow-auto min-w-0"
+      ref={scrollRef || containerRef}
+      className="flex-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset overflow-auto min-w-0 relative"
       tabIndex={0}
       onKeyDown={handleKeyDown}
+      onScroll={handleScroll}
       onMouseDown={(e) => {
         // Ensure the grid gets focus when clicked anywhere
         e.currentTarget.focus()
       }}
       style={{ outline: "none" }}
     >
-      <div className="relative">
-        <table className="border-collapse" style={{ minWidth: '5300px' }}>
-          <thead>
-            <tr>
-              <th className="w-12 h-6 bg-gray-100 border border-gray-300 text-xs font-normal sticky top-0 z-10"></th>
-              {Array.from({ length: maxCols }, (_, i) => (
-                <th
-                  key={i}
-                  className="w-[100px] min-w-[100px] h-6 bg-gray-100 border border-gray-300 text-xs font-normal px-2 sticky top-0 z-10"
-                >
-                  {getColumnHeader(i)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Array.from({ length: maxRows }, (_, rowIndex) => (
-              <tr key={rowIndex}>
-                <td className="w-12 h-6 bg-gray-100 border border-gray-300 text-xs text-center font-normal sticky left-0 z-10">
-                  {rowIndex + 1}
-                </td>
-                {Array.from({ length: maxCols }, (_, colIndex) => {
-                  const cell = sheet.data[rowIndex]?.[colIndex]
-                  // In the grid, always show the computed value (evaluate formulas dynamically)
-                  const cellValue = getCellDisplayValue(cell)
-                  const isSelected = isCellInSelection(rowIndex, colIndex)
-                  const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex
-
-                  return (
-                    <td
-                      key={colIndex}
-                      className={`w-[100px] min-w-[100px] h-6 border border-gray-300 px-1 text-xs cursor-cell relative ${
-                        isSelected ? "bg-blue-100 border-blue-500 border-2 z-20" : "hover:bg-gray-50"
-                      }`}
-                      onClick={() => handleCellClick(rowIndex, colIndex)}
-                      onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
-                    >
-                      {isEditing ? (
-                        <input
-                          ref={inputRef}
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onBlur={handleEditSubmit}
-                          onKeyDown={handleKeyDown}
-                          className="w-full h-full border-none outline-none bg-white text-xs px-1 absolute inset-0 z-30"
-                          style={{ minHeight: "22px" }}
-                        />
-                      ) : (
-                        <span className="block truncate leading-5">{String(cellValue)}</span>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="relative" style={{ width: '5300px', height: '1250px' }}>
+        <canvas
+          ref={canvasRef}
+          className="absolute top-0 left-0"
+          onMouseDown={handleCanvasMouseDown}
+          onDoubleClick={handleCanvasDoubleClick}
+          style={{ width: '5300px', height: '1250px' }}
+        />
+        
+        {/* Input overlay for cell editing */}
+        {editingCell && (
+          <input
+            ref={inputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={handleEditSubmit}
+            onKeyDown={handleKeyDown}
+            className="absolute border-2 border-blue-500 outline-none bg-white text-xs px-1 z-30"
+            style={{
+              left: editInputPosition.x,
+              top: editInputPosition.y,
+              width: editInputPosition.width,
+              height: editInputPosition.height,
+              fontSize: '12px',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}
+          />
+        )}
       </div>
     </div>
   )
